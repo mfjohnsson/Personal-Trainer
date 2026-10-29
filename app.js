@@ -23,11 +23,12 @@ function isoWeek(d) {
 
 function currentRoute() {
   const name = location.hash.replace(/^#\/?/, "").split(/[/?]/)[0];
-  return name in routes ? name : DEFAULT_ROUTE;
+  return Object.hasOwn(routes, name) ? name : DEFAULT_ROUTE;
 }
 
 function render() {
   const name = currentRoute();
+  if (location.hash !== "#/" + name) history.replaceState(null, "", "#/" + name);
   get(); // load persisted state early so storage problems surface here, not mid-view
   weekEl.textContent = "v. " + isoWeek(new Date());
   navLinks.forEach((a) => {

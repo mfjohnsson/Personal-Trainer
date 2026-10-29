@@ -19,7 +19,14 @@ let state = null;
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
-    return migrate(raw ? JSON.parse(raw) : null);
+    if (!raw) return defaults();
+    try {
+      return migrate(JSON.parse(raw));
+    } catch {
+      // Corrupt JSON: keep the raw string so it is not lost when we overwrite KEY.
+      try { localStorage.setItem(KEY + ".corrupt", raw); } catch {}
+      return defaults();
+    }
   } catch {
     return defaults();
   }
