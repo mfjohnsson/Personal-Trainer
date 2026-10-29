@@ -1,0 +1,59 @@
+// All persistence lives here. One localStorage key, versioned schema.
+const KEY = "traningskost.v1";
+export const SCHEMA_VERSION = 1;
+
+const defaults = () => ({ schemaVersion: SCHEMA_VERSION });
+
+// Upgrade data written by older schema versions. Add one `if` per version bump.
+export function migrate(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return defaults();
+  let v = Number.isInteger(data.schemaVersion) ? data.schemaVersion : 0;
+  // if (v < 2) { ...transform data...; v = 2; }
+  if (v < SCHEMA_VERSION) v = SCHEMA_VERSION;
+  data.schemaVersion = v;
+  return data;
+}
+
+let state = null;
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    return migrate(raw ? JSON.parse(raw) : null);
+  } catch {
+    return defaults();
+  }
+}
+
+function persist() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensure() {
+  if (!state) state = load();
+  return state;
+}
+
+// get() returns the whole state; get("profile") a top-level field.
+export function get(field, fallback = undefined) {
+  const s = ensure();
+  if (field === undefined) return s;
+  return s[field] === undefined ? fallback : s[field];
+}
+
+export function set(field, value) {
+  ensure()[field] = value;
+  return persist();
+}
+
+// update("profile", p => ({ ...p, age: 35 }))
+export function update(field, fn, fallback = undefined) {
+  const s = ensure();
+  s[field] = fn(s[field] === undefined ? fallback : s[field]);
+  return persist();
+}
