@@ -33,7 +33,7 @@ export function mount(el) {
       return `<details class="card day" data-day="${d}"${open.has(d) ? " open" : ""}>
         <summary><span class="day-name">${name}${isToday ? ` <span class="today">idag</span>` : ""}</span>
           <span class="day-pass">${own ? "Flyttat" : heading}</span>${badge}</summary>
-        ${t.minimumHtml(d === 0 && items.includes(0))}${movedNote}${body}
+        ${t.minimumHtml()}${movedNote}${body}
       </details>`;
     }).join("");
     root.innerHTML = cards + t.storageErrorHtml;

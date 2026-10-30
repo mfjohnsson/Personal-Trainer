@@ -1,7 +1,7 @@
 // Weekly training plan: template, week creation and the (derived) schedule. No DOM, no storage.
 export const DAYS = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag", "Lördag", "Söndag"];
 
-export const DAILY_MIN = { pullups: 5, pushups: 50 };
+export const DAILY_MIN = { pullups: 10, pushups: 50 };
 
 // Each pass has fixed slots (one per muscle group / movement). You pick which exercise fills a slot,
 // but a slot can never be empty or doubled, so the pass stays balanced. First option is the default.

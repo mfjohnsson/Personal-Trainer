@@ -29,7 +29,7 @@ export function mount(el) {
           <p class="empty">${movedTo[todayIdx] !== undefined ? "Dagens pass ligger senare i veckan." : "Ingen träning planerad idag."}</p></section>`;
     root.innerHTML = `<section class="card">
         <h2><span class="dot" style="background: var(--c-midja)"></span>${plan.DAYS[todayIdx]}</h2>
-        ${t.minimumHtml(todayIdx === 0 && items.includes(0))}
+        ${t.minimumHtml()}
       </section>${body}${t.storageErrorHtml}`;
   }
 

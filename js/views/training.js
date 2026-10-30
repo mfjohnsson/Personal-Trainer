@@ -42,12 +42,8 @@ export function ensureWeek(today) {
   return week;
 }
 
-// pressToday: Push (pass 0) sits on this day, so the press replaces the push-ups.
-export function minimumHtml(pressToday) {
-  const pushups = pressToday
-    ? `${plan.DAILY_MIN.pushups} armhävningar ersätts idag av pressövningen i Push-passet`
-    : `${plan.DAILY_MIN.pushups} armhävningar`;
-  return `<p class="minimum"><strong>Dagligt minimum:</strong> ${plan.DAILY_MIN.pullups} pull-ups · ${pushups}</p>`;
+export function minimumHtml() {
+  return `<p class="minimum"><strong>Dagligt minimum:</strong> ${plan.DAILY_MIN.pullups} pull-ups · ${plan.DAILY_MIN.pushups} armhävningar</p>`;
 }
 
 export function passHtml(week, passDay) {
