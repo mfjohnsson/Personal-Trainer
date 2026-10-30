@@ -1,4 +1,4 @@
-const CACHE = "traningskost-shell-v18";
+const CACHE = "traningskost-shell-v19";
 const SHELL = [
   "./",
   "index.html",
@@ -7,6 +7,7 @@ const SHELL = [
   "js/store.js",
   "js/calc.js",
   "js/plan.js",
+  "js/meals.js",
   "js/views/training.js",
   "js/views/idag.js",
   "js/views/vecka.js",
