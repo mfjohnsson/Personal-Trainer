@@ -68,3 +68,13 @@ export function update(field, fn, fallback = undefined) {
   const s = ensure();
   return set(field, fn(s[field] === undefined ? fallback : s[field]));
 }
+
+// Several fields in one write: either all are stored or none (the in-memory state is rolled back).
+export function setMany(fields) {
+  const s = ensure();
+  const prev = Object.fromEntries(Object.keys(fields).map((k) => [k, s[k]]));
+  Object.assign(s, fields);
+  if (persist()) return true;
+  for (const [k, v] of Object.entries(prev)) if (v === undefined) delete s[k]; else s[k] = v;
+  return false;
+}

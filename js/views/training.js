@@ -1,5 +1,5 @@
 // Shared training UI for Idag and Vecka: current week from storage, set checkboxes, daily minimum.
-import { get, set } from "../store.js";
+import { get, set, setMany } from "../store.js";
 import * as plan from "../plan.js";
 
 // ?today=YYYY-MM-DD overrides the date, so moved passes can be tested without changing the phone clock.
@@ -12,14 +12,20 @@ export function currentWeek(today) {
   const start = plan.mondayOf(plan.parseIso(today));
   const weeks = get("weeks") ?? {};
   const choices = get("choices") ?? {};
-  const week = weeks[start] ? plan.upgradeWeek(weeks[start], choices) : plan.createWeek(start, choices);
-  return { week, weeks, start, stored: weeks[start] };
+  const progress = get("progress") ?? {};
+  if (weeks[start]) return { week: plan.upgradeWeek(weeks[start], choices, progress), stored: weeks[start] };
+  // New week: count last week toward progression, then build this week from the new levels.
+  const next = plan.advance(weeks, progress, start);
+  return { week: plan.createWeek(start, choices, next.progress), next };
 }
 
-// Persists the week (creating it on first touch). Returns false if storage refused.
+// Persists the week (creating it on first touch). A new week is written together with the progress
+// that last week produced, in one write, so the two can never disagree. Returns false if storage refused.
 function saveWeek(week) {
   const weeks = get("weeks") ?? {};
-  return set("weeks", { ...weeks, [week.start]: week });
+  if (weeks[week.start]) return set("weeks", { ...weeks, [week.start]: week });
+  const next = plan.advance(weeks, get("progress") ?? {}, week.start);
+  return setMany({ weeks: { ...next.weeks, [week.start]: week }, progress: next.progress });
 }
 
 export function toggleSet(week, key, checked, todayIdx) {
@@ -32,7 +38,7 @@ export function changeChoice(week, passDay, exIdx, optionId) {
   const slot = plan.CATALOG[passDay].slots[exIdx];
   const choices = { ...(get("choices") ?? {}), [slot.id]: optionId };
   if (!set("choices", choices)) return null;
-  const next = plan.applyChoice(week, passDay, exIdx, optionId);
+  const next = plan.applyChoice(week, passDay, exIdx, optionId, get("progress") ?? {});
   return saveWeek(next) ? next : null;
 }
 
@@ -64,6 +70,7 @@ export function passHtml(week, passDay) {
     return `<div class="exercise">
       <div class="ex-slot">${slot.label}</div>
       <div class="ex-head">${picker}<span class="ex-reps">${ex.sets > 1 ? ex.sets + " × " : ""}${ex.reps}</span></div>
+      ${ex.note ? `<p class="note">${ex.note}</p>` : ""}
       <div class="sets">${boxes}</div>
     </div>`;
   }).join("");

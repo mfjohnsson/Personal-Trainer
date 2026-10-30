@@ -86,14 +86,54 @@ export const CATALOG = [
   ] },
 ];
 
+// Progression. Every exercise has a `step` (0 = catalog start). Two full weeks in a row raise it by one.
+// Strength: reps climb through the range first (a lone number n counts as n..n+2); passing the top
+// resets reps to the bottom and asks for more weight. Weights are not logged, so the note only says
+// how much more than the starting weight. Cardio: more minutes, or one more interval, up to a cap.
+const CARDIO = {
+  "distanslöpning": { kind: "minutes", base: 40, by: 5, max: 60 },
+  "cykling": { kind: "minutes", base: 50, by: 5, max: 75 },
+  "intervaller-löpning": { kind: "sets", by: 1, max: 10 },
+};
+const BODYWEIGHT = new Set(["pike-armhävningar", "dips-stolar", "pullups", "chinups", "band-pull-apart"]);
+const KG_PER_TIER = 2.5;
+export const WEEKS_FOR_STEP = 2;
+
+const repRange = (reps) => {
+  const m = /^(\d+)(?:–(\d+))?$/.exec(reps);
+  return m ? [+m[1], m[2] ? +m[2] : +m[1] + 2] : null;
+};
+const kg = (n) => String(n).replace(".", ",");
+
+export function levelOf(option, step = 0) {
+  const c = CARDIO[option.id];
+  if (c?.kind === "minutes") return { sets: option.sets, reps: `${Math.min(c.base + c.by * step, c.max)} min` };
+  if (c?.kind === "sets") return { sets: Math.min(option.sets + c.by * step, c.max), reps: option.reps };
+  const range = repRange(option.reps);
+  if (!range || step <= 0) return { sets: option.sets, reps: option.reps };
+  const [lo, hi] = range;
+  const width = hi - lo + 1, tier = Math.floor(step / width), off = step % width;
+  const total = kg(tier * KG_PER_TIER);
+  let note;
+  if (tier > 0) {
+    const how = BODYWEIGHT.has(option.id) ? "extra vikt eller långsammare tempo" : `+${total} kg mot startvikten`;
+    note = off === 0 ? `Höj vikten: ${how}` : `Behåll vikten: ${how}`;
+  }
+  return { sets: option.sets, reps: String(lo + off), ...(note && { note }) };
+}
+
 const pick = (slot, id) => slot.options.find((o) => o.id === id) ?? slot.options[0];
-const fill = (slot, o) => ({ slot: slot.id, id: o.id, name: o.name, sets: o.sets, reps: o.reps });
+const fill = (slot, o, progress = {}) => {
+  const { sets, reps, note } = levelOf(o, progress[o.id]?.step ?? 0);
+  return { slot: slot.id, id: o.id, name: o.name, sets, reps, ...(note && { note }) };
+};
 
 // choices = { slotId: optionId }, your latest pick per slot; unknown ids fall back to the default.
-function buildPlan(choices) {
+// progress = { exerciseId: { step, streak } }.
+function buildPlan(choices, progress) {
   return CATALOG.map((p) => ({
     title: p.title,
-    exercises: p.slots.map((slot) => fill(slot, pick(slot, choices[slot.id]))),
+    exercises: p.slots.map((slot) => fill(slot, pick(slot, choices[slot.id]), progress)),
   }));
 }
 
@@ -121,24 +161,55 @@ export function dayIndex(start, today) {
   return Math.round((b - a) / 86400000);
 }
 
-export function createWeek(start, choices = {}) {
-  return { start, plan: buildPlan(choices), done: {}, doneOn: {} };
+export function createWeek(start, choices = {}, progress = {}) {
+  return { start, plan: buildPlan(choices, progress), done: {}, doneOn: {} };
+}
+
+const exerciseDone = (week, p, e) => {
+  const sets = week.plan[p].exercises[e].sets;
+  for (let s = 0; s < sets; s++) if (!week.done[setKey(p, e, s)]) return false;
+  return sets > 0;
+};
+
+// Folds one finished week into the progress: a fully checked exercise extends its streak (and steps up
+// at WEEKS_FOR_STEP), anything else resets it, and so does an exercise that was not in the week.
+export function evaluateWeek(week, progress) {
+  const next = {};
+  for (const [id, v] of Object.entries(progress)) next[id] = { ...v, streak: 0 };
+  week.plan.forEach((pass, p) => pass.exercises.forEach((ex, e) => {
+    const cur = progress[ex.id] ?? { step: 0, streak: 0 };
+    if (!exerciseDone(week, p, e)) next[ex.id] = { step: cur.step, streak: 0 };
+    else if (cur.streak + 1 >= WEEKS_FOR_STEP) next[ex.id] = { step: cur.step + 1, streak: 0 };
+    else next[ex.id] = { step: cur.step, streak: cur.streak + 1 };
+  }));
+  return next;
+}
+
+// Called once when a new week is about to be created. Evaluates last week (if it exists and has not
+// been counted yet); with no last week the streaks reset, since a gap breaks "two weeks in a row".
+export function advance(weeks, progress, start) {
+  const d = parseIso(start);
+  d.setDate(d.getDate() - 7);
+  const prevStart = isoDate(d), prev = weeks[prevStart];
+  if (!prev) return { weeks, progress: evaluateWeek({ plan: [], done: {} }, progress) };
+  if (prev.evaluated) return { weeks, progress };
+  return { weeks: { ...weeks, [prevStart]: { ...prev, evaluated: true } }, progress: evaluateWeek(prev, progress) };
 }
 
 // Weeks saved before slots existed lack `slot` on their exercises. Rebuild the plan with defaults;
 // exercise order and set counts match, so checked sets stay valid.
-export function upgradeWeek(week, choices = {}) {
+export function upgradeWeek(week, choices = {}, progress = {}) {
   if (week.plan?.[0]?.exercises?.[0]?.slot) return week;
-  return { ...week, plan: buildPlan(choices), doneOn: week.doneOn ?? {} };
+  return { ...week, plan: buildPlan(choices, progress), doneOn: week.doneOn ?? {} };
 }
 
 // Swap the exercise in one slot. Checked sets of that exercise are cleared (the sets differ).
-export function applyChoice(week, passDay, exIdx, optionId) {
+export function applyChoice(week, passDay, exIdx, optionId, progress = {}) {
   const slot = CATALOG[passDay].slots[exIdx];
   const option = slot.options.find((o) => o.id === optionId);
   if (!option) return week;
   const plan = week.plan.map((p, i) => i !== passDay ? p : {
-    ...p, exercises: p.exercises.map((e, j) => (j === exIdx ? fill(slot, option) : e)),
+    ...p, exercises: p.exercises.map((e, j) => (j === exIdx ? fill(slot, option, progress) : e)),
   });
   const done = { ...week.done };
   for (const k of Object.keys(done)) if (k.startsWith(`${passDay}:${exIdx}:`)) delete done[k];
