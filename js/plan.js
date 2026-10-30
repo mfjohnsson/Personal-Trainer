@@ -3,35 +3,101 @@ export const DAYS = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag", "Lörda
 
 export const DAILY_MIN = { pullups: 5, pushups: 50 };
 
-// Index = weekday (0 = Monday). Weekend has no pass.
-const TEMPLATE = [
-  { title: "Push", exercises: [
-    { name: "Incline hantelpress", sets: 4, reps: "8–10" },
-    { name: "Militärpress med skivstång", sets: 3, reps: "8" },
-    { name: "Sidolyft med hantlar", sets: 3, reps: "12" },
-    { name: "Triceps french press", sets: 3, reps: "10" },
+// Each pass has fixed slots (one per muscle group / movement). You pick which exercise fills a slot,
+// but a slot can never be empty or doubled, so the pass stays balanced. First option is the default.
+// Index = weekday (0 = Monday). Weekend has no pass. Slot order = exercise order in the stored week.
+const ex = (id, name, sets, reps) => ({ id, name, sets, reps });
+export const CATALOG = [
+  { title: "Push", slots: [
+    { id: "push-bröst", label: "Bröst", options: [
+      ex("incline-hantelpress", "Incline hantelpress", 4, "8–10"),
+      ex("bänkpress-skivstång", "Bänkpress med skivstång", 4, "8"),
+      ex("golvpress-hantlar", "Golvpress med hantlar", 4, "10"),
+    ] },
+    { id: "push-axlar", label: "Axlar", options: [
+      ex("militärpress-skivstång", "Militärpress med skivstång", 3, "8"),
+      ex("axelpress-hantlar", "Axelpress med hantlar", 3, "10"),
+      ex("pike-armhävningar", "Pike-armhävningar", 3, "10"),
+    ] },
+    { id: "push-sidoaxlar", label: "Sidoaxlar", options: [
+      ex("sidolyft-hantlar", "Sidolyft med hantlar", 3, "12"),
+      ex("upprätt-rodd", "Upprätt rodd med skivstång", 3, "10"),
+    ] },
+    { id: "push-triceps", label: "Triceps", options: [
+      ex("french-press", "Triceps french press", 3, "10"),
+      ex("triceps-över-huvudet", "Triceps över huvudet med hantel", 3, "10"),
+      ex("smal-bänkpress", "Smal bänkpress", 3, "8"),
+      ex("dips-stolar", "Dips mellan stolar", 3, "12"),
+    ] },
   ] },
-  { title: "Distans", exercises: [
-    { name: "Distanslöpning, lugnt tempo", sets: 1, reps: "40 min" },
+  { title: "Distans", slots: [
+    { id: "distans", label: "Kondition", options: [
+      ex("distanslöpning", "Distanslöpning, lugnt tempo", 1, "40 min"),
+      ex("cykling", "Cykling, lugnt tempo", 1, "50 min"),
+    ] },
   ] },
-  { title: "Pull", exercises: [
-    { name: "Skivstångsrodd", sets: 4, reps: "8" },
-    { name: "Enarmsrodd med hantel", sets: 3, reps: "10" },
-    { name: "Bakre axel med hantlar", sets: 3, reps: "12" },
-    { name: "Bicepscurl", sets: 3, reps: "10" },
+  { title: "Pull", slots: [
+    { id: "pull-rodd", label: "Rygg, tung rodd", options: [
+      ex("skivstångsrodd", "Skivstångsrodd", 4, "8"),
+      ex("hantelrodd-böjd", "Hantelrodd, böjd framåt", 4, "10"),
+    ] },
+    { id: "pull-rygg2", label: "Rygg, komplettering", options: [
+      ex("enarmsrodd", "Enarmsrodd med hantel", 3, "10"),
+      ex("pullups", "Pull-ups", 3, "5–8"),
+      ex("chinups", "Chins", 3, "5–8"),
+    ] },
+    { id: "pull-bakaxel", label: "Bakre axel", options: [
+      ex("bakre-axel-hantlar", "Bakre axel med hantlar", 3, "12"),
+      ex("band-pull-apart", "Band pull-aparts", 3, "15"),
+    ] },
+    { id: "pull-biceps", label: "Biceps", options: [
+      ex("bicepscurl", "Bicepscurl", 3, "10"),
+      ex("hammarcurl", "Hammarcurl", 3, "10"),
+      ex("skivstångscurl", "Curl med skivstång", 3, "10"),
+    ] },
   ] },
-  { title: "Intervaller", exercises: [
-    { name: "Intervall: 1 min hårt, 2 min lugnt", sets: 6, reps: "1 min" },
+  { title: "Intervaller", slots: [
+    { id: "intervaller", label: "Kondition", options: [
+      ex("intervaller-löpning", "Intervall: 1 min hårt, 2 min lugnt", 6, "1 min"),
+    ] },
   ] },
-  { title: "Legs", exercises: [
-    { name: "Knäböj med skivstång", sets: 4, reps: "8" },
-    { name: "Raka marklyft", sets: 3, reps: "8" },
-    { name: "Utfall med hantlar", sets: 3, reps: "10" },
-    { name: "Vadlyft", sets: 3, reps: "15" },
+  { title: "Legs", slots: [
+    { id: "legs-knäböj", label: "Knäböj", options: [
+      ex("knäböj-skivstång", "Knäböj med skivstång", 4, "8"),
+      ex("goblet-squat", "Goblet squat med hantel", 4, "10"),
+      ex("knäböj-hantlar", "Knäböj med hantlar", 4, "10"),
+    ] },
+    { id: "legs-höft", label: "Höft och bakre lår", options: [
+      ex("rdl-skivstång", "Romanian deadlift med skivstång", 3, "8"),
+      ex("rdl-hantlar", "Romanian deadlift med hantlar", 3, "10"),
+      ex("rdl-enben", "Enbens Romanian deadlift", 3, "8"),
+      ex("hip-thrust", "Hip thrust", 3, "10"),
+    ] },
+    { id: "legs-enben", label: "Enbensövning", options: [
+      ex("utfall-hantlar", "Utfall med hantlar", 3, "10"),
+      ex("split-squat", "Bulgarian split squat", 3, "8"),
+      ex("enbens-knäböj", "Enbens-knäböj med hantel", 3, "6"),
+      ex("gångutfall", "Gångutfall", 3, "12"),
+    ] },
+    { id: "legs-vader", label: "Vader", options: [
+      ex("vadlyft", "Vadlyft", 3, "15"),
+      ex("vadlyft-enben", "Enbens vadlyft", 3, "12"),
+    ] },
   ] },
 ];
 
-export const PASS_DAYS = TEMPLATE.length;
+const pick = (slot, id) => slot.options.find((o) => o.id === id) ?? slot.options[0];
+const fill = (slot, o) => ({ slot: slot.id, id: o.id, name: o.name, sets: o.sets, reps: o.reps });
+
+// choices = { slotId: optionId }, your latest pick per slot; unknown ids fall back to the default.
+function buildPlan(choices) {
+  return CATALOG.map((p) => ({
+    title: p.title,
+    exercises: p.slots.map((slot) => fill(slot, pick(slot, choices[slot.id]))),
+  }));
+}
+
+export const PASS_DAYS = CATALOG.length;
 
 const pad = (n) => String(n).padStart(2, "0");
 export const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -55,8 +121,31 @@ export function dayIndex(start, today) {
   return Math.round((b - a) / 86400000);
 }
 
-export function createWeek(start) {
-  return { start, plan: structuredClone(TEMPLATE), done: {}, doneOn: {} };
+export function createWeek(start, choices = {}) {
+  return { start, plan: buildPlan(choices), done: {}, doneOn: {} };
+}
+
+// Weeks saved before slots existed lack `slot` on their exercises. Rebuild the plan with defaults;
+// exercise order and set counts match, so checked sets stay valid.
+export function upgradeWeek(week, choices = {}) {
+  if (week.plan?.[0]?.exercises?.[0]?.slot) return week;
+  return { ...week, plan: buildPlan(choices), doneOn: week.doneOn ?? {} };
+}
+
+// Swap the exercise in one slot. Checked sets of that exercise are cleared (the sets differ).
+export function applyChoice(week, passDay, exIdx, optionId) {
+  const slot = CATALOG[passDay].slots[exIdx];
+  const option = slot.options.find((o) => o.id === optionId);
+  if (!option) return week;
+  const plan = week.plan.map((p, i) => i !== passDay ? p : {
+    ...p, exercises: p.exercises.map((e, j) => (j === exIdx ? fill(slot, option) : e)),
+  });
+  const done = { ...week.done };
+  for (const k of Object.keys(done)) if (k.startsWith(`${passDay}:${exIdx}:`)) delete done[k];
+  const doneOn = { ...week.doneOn };
+  const next = { ...week, plan, done, doneOn };
+  if (!passProgress(next, passDay).complete) delete doneOn[passDay];
+  return next;
 }
 
 export const setKey = (passDay, ex, set) => `${passDay}:${ex}:${set}`;

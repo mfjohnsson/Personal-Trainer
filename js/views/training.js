@@ -11,7 +11,9 @@ export function todayIso() {
 export function currentWeek(today) {
   const start = plan.mondayOf(plan.parseIso(today));
   const weeks = get("weeks") ?? {};
-  return { week: weeks[start] ?? plan.createWeek(start), weeks, start };
+  const choices = get("choices") ?? {};
+  const week = weeks[start] ? plan.upgradeWeek(weeks[start], choices) : plan.createWeek(start, choices);
+  return { week, weeks, start, stored: weeks[start] };
 }
 
 // Persists the week (creating it on first touch). Returns false if storage refused.
@@ -25,48 +27,73 @@ export function toggleSet(week, key, checked, todayIdx) {
   return saveWeek(next) ? next : null;
 }
 
+// Your pick is remembered per slot and used for all later weeks. Returns the new week or null.
+export function changeChoice(week, passDay, exIdx, optionId) {
+  const slot = plan.CATALOG[passDay].slots[exIdx];
+  const choices = { ...(get("choices") ?? {}), [slot.id]: optionId };
+  if (!set("choices", choices)) return null;
+  const next = plan.applyChoice(week, passDay, exIdx, optionId);
+  return saveWeek(next) ? next : null;
+}
+
 export function ensureWeek(today) {
-  const { week, weeks, start } = currentWeek(today);
-  if (!weeks[start]) saveWeek(week); // on failure the week still renders; the first toggle shows the error
+  const { week, stored } = currentWeek(today);
+  if (stored !== week) saveWeek(week); // on failure the week still renders; the first toggle shows the error
   return week;
 }
 
 export function minimumHtml(dayIdx) {
   const pushups = dayIdx === 0
-    ? `${plan.DAILY_MIN.pushups} armhävningar ersätts idag av incline hantelpress`
+    ? `${plan.DAILY_MIN.pushups} armhävningar ersätts idag av pressövningen i Push-passet`
     : `${plan.DAILY_MIN.pushups} armhävningar`;
   return `<p class="minimum"><strong>Dagligt minimum:</strong> ${plan.DAILY_MIN.pullups} pull-ups · ${pushups}</p>`;
 }
 
 export function passHtml(week, passDay) {
   const pass = week.plan[passDay];
+  const slots = plan.CATALOG[passDay].slots;
   return pass.exercises.map((ex, e) => {
     const boxes = Array.from({ length: ex.sets }, (_, s) => {
       const key = plan.setKey(passDay, e, s);
       return `<label class="set"><input type="checkbox" data-key="${key}"${week.done[key] ? " checked" : ""}>
         <span>${ex.sets === 1 ? "Klar" : "Set " + (s + 1)}</span></label>`;
     }).join("");
+    const slot = slots[e];
+    const picker = slot.options.length > 1
+      ? `<select class="pick" data-pass="${passDay}" data-ex="${e}" aria-label="Byt övning: ${slot.label}">
+          ${slot.options.map((o) => `<option value="${o.id}"${o.id === ex.id ? " selected" : ""}>${o.name}</option>`).join("")}
+        </select>`
+      : `<span class="ex-name">${ex.name}</span>`;
     return `<div class="exercise">
-      <div class="ex-head"><span class="ex-name">${ex.name}</span><span class="ex-reps">${ex.sets > 1 ? ex.sets + " × " : ""}${ex.reps}</span></div>
+      <div class="ex-slot">${slot.label}</div>
+      <div class="ex-head">${picker}<span class="ex-reps">${ex.sets > 1 ? ex.sets + " × " : ""}${ex.reps}</span></div>
       <div class="sets">${boxes}</div>
     </div>`;
   }).join("");
 }
 
-// Wires set checkboxes inside `el`; calls `rerender()` after a successful save and restores focus.
+// Wires set checkboxes and exercise pickers inside `el`; calls `rerender()` after a successful
+// save and restores focus.
 export function bindSets(el, getWeek, setWeek, rerender, todayIdx) {
   el.addEventListener("change", (e) => {
     const input = e.target;
-    if (!(input instanceof HTMLInputElement) || !input.dataset.key) return;
-    const next = toggleSet(getWeek(), input.dataset.key, input.checked, todayIdx);
+    let next, focusSel;
+    if (input instanceof HTMLSelectElement && input.dataset.pass) {
+      next = changeChoice(getWeek(), +input.dataset.pass, +input.dataset.ex, input.value);
+      focusSel = `select[data-pass="${input.dataset.pass}"][data-ex="${input.dataset.ex}"]`;
+    } else if (input instanceof HTMLInputElement && input.dataset.key) {
+      next = toggleSet(getWeek(), input.dataset.key, input.checked, todayIdx);
+      focusSel = `input[data-key="${input.dataset.key}"]`;
+    } else return;
     if (!next) {
-      input.checked = !input.checked;
+      if (input instanceof HTMLInputElement) input.checked = !input.checked;
+      else rerender();
       el.querySelector(".storage-error")?.removeAttribute("hidden");
       return;
     }
     setWeek(next);
     rerender();
-    el.querySelector(`input[data-key="${input.dataset.key}"]`)?.focus();
+    el.querySelector(focusSel)?.focus();
   });
 }
 
