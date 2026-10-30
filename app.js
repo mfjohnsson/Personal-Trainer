@@ -46,7 +46,21 @@ if (!location.hash) history.replaceState(null, "", "#/" + DEFAULT_ROUTE);
 render();
 
 if ("serviceWorker" in navigator) {
+  // A new service worker skips waiting and claims the page. Reload once so the new files are used;
+  // skip when there was no controller before (first install, nothing stale to replace).
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || reloaded) return;
+    reloaded = true;
+    location.reload();
+  });
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+    navigator.serviceWorker.register("sw.js").then((reg) => {
+      // Installed apps stay open for days: look for a new version whenever the app comes back.
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") reg.update().catch(() => {});
+      });
+    }).catch(() => {});
   });
 }
