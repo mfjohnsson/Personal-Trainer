@@ -177,3 +177,29 @@ h2 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; ma
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* --- Training --- */
+.minimum { font-size: 0.85rem; color: var(--ink-2); margin: 0 0 12px; }
+.card h3 { font-size: 1rem; margin: 12px 0 8px; }
+.badge { margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--ink-2); background: var(--surface); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.badge.ok { color: var(--success); border-color: var(--success); }
+details.day { padding: 0; }
+details.day > summary { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 8px 16px; cursor: pointer; list-style: none; }
+details.day > summary::-webkit-details-marker { display: none; }
+details.day > summary .day-name { font-weight: 650; }
+details.day > summary .day-pass { flex: 1; color: var(--ink-2); font-size: 0.9rem; }
+details.day > summary .badge { margin-left: 0; }
+details.day[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+details.day > :not(summary) { margin-left: 16px; margin-right: 16px; }
+details.day > :last-child { margin-bottom: 16px; }
+.today { font-size: 0.7rem; font-weight: 600; color: var(--c-vikt); text-transform: uppercase; letter-spacing: 0.06em; }
+.exercise + .exercise { margin-top: 14px; }
+.ex-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.ex-name { font-weight: 600; }
+.ex-reps { color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sets { display: flex; flex-wrap: wrap; gap: 8px; }
+.set { position: relative; display: inline-flex; }
+.set input { position: absolute; opacity: 0; inset: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.set span { min-width: 64px; min-height: 48px; padding: 8px 12px; display: inline-flex; align-items: center; justify-content: center; font-size: 0.9rem; font-weight: 600; color: var(--ink-2); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.set input:checked + span { color: #fff; background: var(--success); border-color: var(--success); }
+.set input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }

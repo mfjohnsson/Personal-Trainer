@@ -1,10 +1,37 @@
+import * as plan from "../plan.js";
+import * as t from "./training.js";
+
 export const title = "Idag";
 
 export function mount(el) {
-  el.innerHTML = `
-    <section class="card">
-      <h2><span class="dot" style="background: var(--c-vikt)"></span>Idag</h2>
-      <p class="empty">Inget att visa än.</p>
-      <p class="empty">Här hamnar dagens pass och måltider när veckan är skapad.</p>
-    </section>`;
+  const root = document.createElement("div");
+  root.className = "view";
+  el.append(root);
+
+  const today = t.todayIso();
+  let week = t.ensureWeek(today);
+  const todayIdx = plan.dayIndex(week.start, today);
+
+  function render() {
+    const items = plan.schedule(week, todayIdx).byDay[todayIdx];
+    const body = items.length
+      ? items.map((p) => {
+          const prog = plan.passProgress(week, p);
+          const moved = p !== todayIdx ? `<p class="note">Flyttat från ${plan.DAYS[p].toLowerCase()}</p>` : "";
+          return `<section class="card">
+            <h2><span class="dot" style="background: var(--c-vikt)"></span>${week.plan[p].title}
+              <span class="badge${prog.complete ? " ok" : ""}">${prog.complete ? "Klart" : prog.done + "/" + prog.total}</span></h2>
+            ${moved}${t.passHtml(week, p)}
+          </section>`;
+        }).join("")
+      : `<section class="card"><h2><span class="dot" style="background: var(--c-vikt)"></span>Vilodag</h2>
+          <p class="empty">Ingen träning planerad idag.</p></section>`;
+    root.innerHTML = `<section class="card">
+        <h2><span class="dot" style="background: var(--c-midja)"></span>${plan.DAYS[todayIdx]}</h2>
+        ${t.minimumHtml(todayIdx)}
+      </section>${body}${t.storageErrorHtml}`;
+  }
+
+  t.bindSets(root, () => week, (w) => { week = w; }, render, todayIdx);
+  render();
 }
