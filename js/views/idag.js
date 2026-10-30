@@ -13,7 +13,8 @@ export function mount(el) {
   const todayIdx = plan.dayIndex(week.start, today);
 
   function render() {
-    const items = plan.schedule(week, todayIdx).byDay[todayIdx];
+    const { byDay, movedTo } = plan.schedule(week, todayIdx);
+    const items = byDay[todayIdx];
     const body = items.length
       ? items.map((p) => {
           const prog = plan.passProgress(week, p);
@@ -25,10 +26,10 @@ export function mount(el) {
           </section>`;
         }).join("")
       : `<section class="card"><h2><span class="dot" style="background: var(--c-vikt)"></span>Vilodag</h2>
-          <p class="empty">Ingen träning planerad idag.</p></section>`;
+          <p class="empty">${movedTo[todayIdx] !== undefined ? "Dagens pass ligger senare i veckan." : "Ingen träning planerad idag."}</p></section>`;
     root.innerHTML = `<section class="card">
         <h2><span class="dot" style="background: var(--c-midja)"></span>${plan.DAYS[todayIdx]}</h2>
-        ${t.minimumHtml(todayIdx)}
+        ${t.minimumHtml(todayIdx === 0 && items.includes(0))}
       </section>${body}${t.storageErrorHtml}`;
   }
 

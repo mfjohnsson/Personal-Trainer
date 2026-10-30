@@ -27,13 +27,13 @@ export function mount(el) {
       const body = items.map((p) => {
         const moved = p !== d ? `<p class="note">Flyttat från ${plan.DAYS[p].toLowerCase()}</p>` : "";
         return `${moved}${p !== d || items.length > 1 ? `<h3>${week.plan[p].title}</h3>` : ""}${t.passHtml(week, p)}`;
-      }).join("") || `<p class="empty">Ingen träning planerad. Vila.</p>`;
+      }).join("") || `<p class="empty">${own ? "Ingen träning idag, passet ligger senare i veckan." : "Ingen träning planerad. Vila."}</p>`;
       const movedNote = own ? `<p class="note">Passet har flyttats till ${plan.DAYS[movedTo[d]].toLowerCase()}.</p>` : "";
       const isToday = d === todayIdx;
       return `<details class="card day" data-day="${d}"${open.has(d) ? " open" : ""}>
         <summary><span class="day-name">${name}${isToday ? ` <span class="today">idag</span>` : ""}</span>
           <span class="day-pass">${own ? "Flyttat" : heading}</span>${badge}</summary>
-        ${t.minimumHtml(d)}${movedNote}${body}
+        ${t.minimumHtml(d === 0 && items.includes(0))}${movedNote}${body}
       </details>`;
     }).join("");
     root.innerHTML = cards + t.storageErrorHtml;
