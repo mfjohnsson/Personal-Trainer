@@ -53,14 +53,18 @@ export function get(field, fallback = undefined) {
   return s[field] === undefined ? fallback : s[field];
 }
 
+// On a failed write the in-memory value is rolled back so the UI never shows unsaved data as saved.
 export function set(field, value) {
-  ensure()[field] = value;
-  return persist();
+  const s = ensure();
+  const prev = s[field];
+  s[field] = value;
+  if (persist()) return true;
+  if (prev === undefined) delete s[field]; else s[field] = prev;
+  return false;
 }
 
 // update("profile", p => ({ ...p, age: 35 }))
 export function update(field, fn, fallback = undefined) {
   const s = ensure();
-  s[field] = fn(s[field] === undefined ? fallback : s[field]);
-  return persist();
+  return set(field, fn(s[field] === undefined ? fallback : s[field]));
 }

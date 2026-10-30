@@ -1,10 +1,11 @@
-const CACHE = "traningskost-shell-v2";
+const CACHE = "traningskost-shell-v5";
 const SHELL = [
   "./",
   "index.html",
   "styles.css",
   "app.js",
   "js/store.js",
+  "js/calc.js",
   "js/views/idag.js",
   "js/views/vecka.js",
   "js/views/kost.js",
@@ -17,7 +18,7 @@ const SHELL = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())
+    caches.open(CACHE).then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: "reload" })))).then(() => self.skipWaiting())
   );
 });
 
