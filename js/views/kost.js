@@ -1,58 +1,39 @@
 import { get, set } from "../store.js";
-import * as calc from "../calc.js";
 import * as plan from "../plan.js";
 import * as meals from "../meals.js";
+import * as mealplan from "../mealplan.js";
 import { todayIso, storageErrorHtml } from "./training.js";
+import { esc } from "../html.js";
 
 export const title = "Kost";
 
 const nf = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 1 });
 const fmt = (n) => nf.format(n);
 
-function currentTarget() {
-  const stored = get("profile");
-  if (!stored) return null;
-  const { values, errors } = calc.validate(stored);
-  if (Object.keys(errors).length) return null;
-  return { kcal: Math.round(calc.calorieTarget(values)), protein: calc.PROTEIN_G };
-}
-
-// The stored week is reused while the target is unchanged; a new profile or a new week regenerates it.
-function ensureMeals(start, target) {
-  const all = get("meals") ?? {};
-  const cur = all[start];
-  if (cur && cur.target.kcal === target.kcal && cur.target.protein === target.protein) return cur;
-  const d = plan.parseIso(start);
-  d.setDate(d.getDate() - 7);
-  const prevStart = plan.isoDate(d);
-  // Last week may never have been opened; rebuild it so the snack rule still holds across the boundary.
-  const prev = all[prevStart] ?? meals.generateWeek(prevStart, target);
-  const week = meals.generateWeek(start, target, prev.days.at(-1).meals[2].dish);
-  set("meals", { ...all, [start]: week });
-  return week;
-}
-
 const amount = (i) => `${fmt(i.amount)} ${i.unit}`;
 
-function mealHtml(m, d) {
+function mealHtml(m, d, pool) {
   const label = meals.SLOTS.find((s) => s.id === m.slot).label;
   const info = meals.mealInfo(m);
-  const options = meals.DISHES[m.slot];
+  // The week's menu, plus the planned dish if it has been taken off since, so the list never shows the wrong one.
+  const shown = pool[m.slot];
+  const options = shown.some((o) => o.id === m.dish) ? shown : [...shown, meals.dishOf(m.dish)];
   const picker = options.length > 1
     ? `<select class="pick" data-day="${d}" data-slot="${m.slot}" aria-label="Byt rätt: ${label}">
-        ${options.map((o) => `<option value="${o.id}"${o.id === m.dish ? " selected" : ""}>${o.name}</option>`).join("")}
+        ${options.map((o) => `<option value="${o.id}"${o.id === m.dish ? " selected" : ""}>${esc(o.name)}</option>`).join("")}
       </select>`
-    : `<span class="ex-name">${info.name}</span>`;
+    : `<span class="ex-name">${esc(info.name)}</span>`;
   return `<div class="meal">
     <div class="ex-slot">${label}</div>
     <div class="ex-head">${picker}
-      <span class="ex-reps">${info.kcal} kcal · ${info.protein} g</span></div>
-    <p class="note">${info.ingredients.map((i) => `${amount(i)} ${i.name.toLowerCase()}`).join(" · ")}</p>
+      <span class="ex-reps">${info.kcal} kcal</span></div>
+    <p class="note macros">Protein ${info.protein} g · Fett ${info.fat} g · Kolhydrater ${info.carbs} g</p>
+    <p class="note">${info.ingredients.map((i) => esc(`${amount(i)} ${i.name.toLowerCase()}`)).join(" · ")}</p>
   </div>`;
 }
 
 export function mount(el) {
-  const target = currentTarget();
+  const target = mealplan.currentTarget();
   if (!target) {
     el.innerHTML = `
       <section class="card">
@@ -65,12 +46,12 @@ export function mount(el) {
   }
 
   const today = todayIso();
-  const start = plan.mondayOf(plan.parseIso(today));
+  const start = mealplan.weekStart(today);
   const todayIdx = plan.dayIndex(start, today);
   const open = new Set([todayIdx]);
 
   function render() {
-    const week = ensureMeals(start, target);
+    const week = mealplan.weekMeals(start, target);
     draw(week);
     el.querySelectorAll("details.day").forEach((det) => {
       det.addEventListener("toggle", () => {
@@ -83,17 +64,18 @@ export function mount(el) {
   el.onchange = (e) => {
     const sel = e.target;
     if (!(sel instanceof HTMLSelectElement) || !sel.dataset.slot) return;
-    const week = ensureMeals(start, target);
+    const week = mealplan.weekMeals(start, target);
     const next = meals.changeDish(week, +sel.dataset.day, sel.dataset.slot, sel.value);
     const saved = next && set("meals", { ...get("meals"), [start]: next });
     render();
-    if (!saved) el.querySelector(".storage-error")?.removeAttribute("hidden");
+    if (next && !saved) el.querySelector(".storage-error")?.removeAttribute("hidden");
     el.querySelector(`select[data-day="${sel.dataset.day}"][data-slot="${sel.dataset.slot}"]`)?.focus();
   };
 
   render();
 
   function draw(week) {
+    const pool = mealplan.poolOf(start);
     const allOk = week.days.every((day) => meals.withinTarget(meals.dayTotals(day), target));
     const days = week.days.map((day, d) => {
       const t = meals.dayTotals(day);
@@ -102,8 +84,8 @@ export function mount(el) {
         <summary><span class="day-name">${plan.DAYS[d]}${d === todayIdx ? ` <span class="today">idag</span>` : ""}</span>
           <span class="day-pass">${t.kcal} kcal · ${t.protein} g protein</span>
           <span class="badge${ok ? " ok" : ""}">${ok ? "Rätt" : "Avviker"}</span></summary>
-        ${day.meals.map((m) => mealHtml(m, d)).join("")}
-        <p class="note day-total">Summa ${t.kcal} av ${target.kcal} kcal · ${t.protein} av ${target.protein} g protein</p>
+        ${day.meals.map((m) => mealHtml(m, d, pool)).join("")}
+        <p class="note day-total">Summa ${t.kcal} av ${target.kcal} kcal · ${t.protein} av ${target.protein} g protein · fett ${t.fat} g · kolhydrater ${t.carbs} g</p>
       </details>`;
     }).join("");
 
@@ -119,6 +101,11 @@ export function mount(el) {
           : "Några dagar når inte målet inom marginalen med rimliga portioner. De är markerade \"Avviker\"."}</p>
         <p class="note">Byt rätt på en måltid under respektive dag, till exempel för att laga samma matlåda flera dagar. Portionerna räknas om så att dagen fortfarande når målet.</p>
         ${storageErrorHtml}
+        <p class="note">Veckans meny styr rullistorna. Ändrar du menyn gäller den veckans förslag först när du väljer "Skapa om veckan" där.</p>
+        <div class="btn-row">
+          <a class="btn-secondary" href="#/meny">Veckans meny</a>
+          <a class="btn-secondary" href="#/ratter">Redigera rätter</a>
+        </div>
       </section>${days}</div>`;
   }
 }

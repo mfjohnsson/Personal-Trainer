@@ -133,17 +133,18 @@ h2 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; ma
 
 /* --- Inputs --- */
 .field label { display: block; font-size: 0.8rem; font-weight: 600; color: var(--ink-2); margin-bottom: 4px; }
-.field input {
+.field input, .field textarea {
   width: 100%; min-height: 48px; padding: 10px 12px;
   font-size: 1.05rem; font-family: inherit; font-variant-numeric: tabular-nums;
   color: var(--ink); background: var(--surface);
   border: 1px solid var(--line); border-radius: 8px;
 }
-.field input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.field input:focus-visible, .field textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
+.field textarea { resize: vertical; line-height: 1.4; }
 .form { display: flex; flex-direction: column; gap: 12px; }
 .field-error { color: var(--danger); font-size: 0.85rem; margin: 4px 0 0; }
-.field input[aria-invalid] { border-color: var(--danger); }
+.field input[aria-invalid], .field textarea[aria-invalid] { border-color: var(--danger); }
 
 /* --- Stat tiles --- */
 .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
@@ -210,4 +211,29 @@ details.day > :last-child { margin-bottom: 16px; }
 /* --- Meals --- */
 .meal + .meal { margin-top: 14px; }
 .day-total { font-variant-numeric: tabular-nums; }
+.dish-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.dish-row:first-of-type { border-top: none; padding-top: 0; }
+.dish-row.is-off .ex-name { color: var(--ink-3); }
+.dish-main { flex: 1 1 200px; min-width: 0; }
+.dish-actions { display: flex; gap: 8px; }
+.dish-actions .btn-secondary:disabled { opacity: 0.45; cursor: default; }
+.calc { display: flex; flex-direction: column; gap: 12px; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.calc[hidden] { display: none; }
+.calc-row { display: flex; flex-direction: column; gap: 6px; }
+.calc-top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; align-items: baseline; }
+.calc-row .pick { flex: none; width: 100%; font-weight: 400; font-size: 0.9rem; }
+.calc-search { width: 100%; min-height: 44px; padding: 8px 10px; font: inherit; font-size: 0.95rem; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.menu-row { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.menu-row:first-of-type { border-top: none; }
+.menu-row input { flex: none; width: 24px; height: 24px; accent-color: var(--c-vikt); }
+.menu-row .note { display: block; }
+h2 .count { margin-left: 6px; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--ink-3); }
+.btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.btn-row > *, .btn-row > a.btn-secondary { margin-top: 0; justify-content: center; text-align: center; }
+.menu-apply { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.subnav { display: flex; justify-content: space-between; gap: 16px; padding: 0 4px; font-size: 0.9rem; font-weight: 600; }
+.subnav a { color: var(--ink-2); text-decoration: none; padding: 8px 0; }
+.subnav a:hover { text-decoration: underline; }
+.add-dish { margin-top: 12px; width: 100%; }
 a.btn-secondary { display: inline-flex; align-items: center; margin-top: 12px; text-decoration: none; }
+.meal .macros { margin-top: 2px; font-variant-numeric: tabular-nums; }
