@@ -183,6 +183,20 @@ export function dayTotals(day) {
   }, { kcal: 0, protein: 0 });
 }
 
-export const withinTarget = (totals, target) =>
+// Returns a copy of the week where one slot of one day uses another dish. The day's portions are
+// re-fitted to the target. Some combinations can't reach it within normal portions; the view flags those. Null for an unknown dish.
+export function changeDish(week, dayIdx, slot, dishId) {
+  const slotIdx = SLOTS.findIndex((s) => s.id === slot);
+  const chosen = DISHES[slot]?.find((x) => x.id === dishId);
+  const day = week.days[dayIdx];
+  if (slotIdx < 0 || !chosen || !day) return null;
+  const dishes = day.meals.map((m, i) => (i === slotIdx ? chosen : dishOf(m.dish)));
+  const fit = fitDay(dishes, week.target);
+  const days = week.days.map((x, i) => (i !== dayIdx ? x
+    : { meals: dishes.map((dsh, k) => ({ slot: SLOTS[k].id, dish: dsh.id, portion: fit.scales[k] })) }));
+  return { ...week, days };
+}
+
+export const withinTarget =(totals, target) =>
   Math.abs(totals.kcal - target.kcal) <= target.kcal * KCAL_TOLERANCE
   && Math.abs(totals.protein - target.protein) <= PROTEIN_TOLERANCE;

@@ -41,4 +41,21 @@ const a = meals.generateWeek("2026-01-05", targets[3]), b = meals.generateWeek("
 assert.deepEqual(a, b);
 assert.notDeepEqual(a.days, c.days);
 for (const d of Object.values(meals.DISHES).flat()) assert.ok(!LEGUME.test([d.name, ...d.ingredients.map((i) => i[0])].join(" | ")), d.id);
+// Swapping a dish keeps the other days untouched and re-fits the day's portions.
+const snapshot = JSON.stringify(a);
+const refit = meals.changeDish(a, 2, "lunch", a.days[2].meals[1].dish);
+assert.ok(meals.withinTarget(meals.dayTotals(refit.days[2]), a.target), "re-picking the same dish stays on target");
+for (const slot of ["lunch", "mellanmal", "middag"]) {
+  const idx = meals.SLOTS.findIndex((s) => s.id === slot);
+  for (const option of meals.DISHES[slot]) {
+    const swapped = meals.changeDish(a, 2, slot, option.id);
+    assert.equal(swapped.days[2].meals[idx].dish, option.id);
+    assert.deepEqual(swapped.days.filter((_, i) => i !== 2), a.days.filter((_, i) => i !== 2));
+    const t = meals.dayTotals(swapped.days[2]);
+    assert.ok(t.kcal > 0 && swapped.days[2].meals.every((m) => m.portion > 0), `${slot} ${option.id}`);
+  }
+}
+assert.equal(JSON.stringify(a), snapshot, "changeDish does not mutate its input");
+assert.equal(meals.changeDish(a, 2, "lunch", "finns-inte"), null);
+assert.equal(meals.changeDish(a, 9, "lunch", meals.DISHES.lunch[0].id), null);
 console.log("ok");
