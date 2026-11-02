@@ -4,10 +4,14 @@ import * as vecka from "./js/views/vecka.js";
 import * as kost from "./js/views/kost.js";
 import * as profil from "./js/views/profil.js";
 import * as ratter from "./js/views/ratter.js";
-import * as meny from "./js/views/meny.js";
+import * as handla from "./js/views/handla.js";
 import { init as initDishes } from "./js/dishes.js";
 
-const routes = { idag, vecka, kost, profil, ratter, meny };
+const routes = { idag, traning: vecka, kost, profil, ratter, handla };
+// Old addresses still lead somewhere sensible.
+const ALIASES = { vecka: "traning", meny: "ratter" };
+// Sub-pages light up their parent in the bottom nav.
+const PARENT = { ratter: "kost", handla: "kost" };
 const DEFAULT_ROUTE = "idag";
 
 const viewEl = document.getElementById("view");
@@ -25,7 +29,8 @@ function isoWeek(d) {
 }
 
 function currentRoute() {
-  const name = location.hash.replace(/^#\/?/, "").split(/[/?]/)[0];
+  const raw = location.hash.replace(/^#\/?/, "").split(/[/?]/)[0];
+  const name = ALIASES[raw] ?? raw;
   return Object.hasOwn(routes, name) ? name : DEFAULT_ROUTE;
 }
 
@@ -36,11 +41,11 @@ function render() {
   initDishes();
   weekEl.textContent = "v. " + isoWeek(new Date());
   navLinks.forEach((a) => {
-    if (a.dataset.route === (name === "ratter" || name === "meny" ? "kost" : name)) a.setAttribute("aria-current", "page");
+    if (a.dataset.route === (PARENT[name] ?? name)) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   });
   viewEl.innerHTML = "";
-  viewEl.onclick = viewEl.onchange = viewEl.oninput = viewEl.onkeydown = null; // handlers a previous view assigned
+  viewEl.onclick = viewEl.onchange = viewEl.oninput = viewEl.onkeydown = viewEl.onsubmit = null; // handlers a previous view assigned
   routes[name].mount(viewEl);
   document.title = routes[name].title + " – Träning & Kost";
   window.scrollTo(0, 0);

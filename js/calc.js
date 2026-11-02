@@ -36,6 +36,21 @@ export function goalDate(p, from = new Date()) {
   return d;
 }
 
+// Weekly check-in: weight loss slower than 0.25 %/week lowers the calorie target by 150 kcal, faster
+// than 1 %/week raises it by 150. Compared with a weigh-in at least MIN_DAYS earlier.
+export const ADJUST_KCAL = 150;
+export const SLOW_PCT = 0.25;
+export const FAST_PCT = 1;
+export const MIN_DAYS = 5;
+export const KCAL_FLOOR = 1500;
+
+// prev, cur = { weightKg }, days between them. Returns { pctPerWeek, change }.
+export function weighInChange(prev, cur, days) {
+  const pctPerWeek = ((prev.weightKg - cur.weightKg) / prev.weightKg) * 100 / (days / 7);
+  const change = pctPerWeek < SLOW_PCT ? -ADJUST_KCAL : pctPerWeek > FAST_PCT ? ADJUST_KCAL : 0;
+  return { pctPerWeek, change };
+}
+
 // Accepts "82,5" or "82.5". Returns NaN for empty/garbage.
 export function parseNum(s) {
   const t = String(s ?? "").trim().replace(",", ".");

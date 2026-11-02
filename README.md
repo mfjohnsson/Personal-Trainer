@@ -38,8 +38,14 @@ Första gången måste telefonen ha nätet på så att appen hinner cachas. Där
 
 ## Struktur
 
-- `index.html`, `styles.css`, `app.js` – skal, design och router (`#/idag`, `#/vecka`, `#/kost`, `#/profil`)
+- `index.html`, `styles.css`, `app.js` – skal, design och router (`#/idag`, `#/traning`, `#/kost`, `#/profil`, plus `#/ratter` och `#/handla` under Kost)
 - `js/store.js` – all lagring (localStorage, nyckel `traningskost.v1`, `schemaVersion` och `migrate()`)
-- `js/views/` – en fil per vy
+- `js/plan.js` – träningspass, veckans upplägg (vilket pass på vilken dag), progression
+- `js/meals.js`, `js/mealplan.js`, `js/dishes.js` – rätter, veckans mat och dina ändringar av rätterna
+- `js/checkin.js` – vägningar och kalorimålet som följer av dem
+- `js/timer.js` – vilotimern mellan set
+- `js/foods.js`, `data/livsmedel.json` – Livsmedelsverkets näringsvärden
+- `js/views/` – en fil per vy, plus `training.js` och `mealui.js` som delas av flera vyer
 - `sw.js` – service worker (cache-first för appskalet)
+- `tools/*-test.mjs` – tester, kör med `node tools/<namn>-test.mjs`
 - `tools/make-icons.py` – genererar ikonerna i `icons/` (kräver Pillow)

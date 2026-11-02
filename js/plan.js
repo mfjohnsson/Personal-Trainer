@@ -1,14 +1,15 @@
 // Weekly training plan: template, week creation and the (derived) schedule. No DOM, no storage.
 export const DAYS = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag", "Lördag", "Söndag"];
+export const SHORT_DAYS = ["Mån", "Tis", "Ons", "Tor", "Fre", "Lör", "Sön"];
 
 export const DAILY_MIN = { pullups: 10, pushups: 50 };
 
 // Each pass has fixed slots (one per muscle group / movement). You pick which exercise fills a slot,
 // but a slot can never be empty or doubled, so the pass stays balanced. First option is the default.
-// Index = weekday (0 = Monday). Weekend has no pass. Slot order = exercise order in the stored week.
+// Slot order = exercise order in the stored week. Which pass is done on which day is the template.
 const ex = (id, name, sets, reps) => ({ id, name, sets, reps });
 export const CATALOG = [
-  { title: "Push", slots: [
+  { id: "push", title: "Push", slots: [
     { id: "push-bröst", label: "Bröst", options: [
       ex("incline-hantelpress", "Incline hantelpress", 4, "8–10"),
       ex("bänkpress-skivstång", "Bänkpress med skivstång", 4, "8"),
@@ -30,13 +31,14 @@ export const CATALOG = [
       ex("dips-stolar", "Dips mellan stolar", 3, "12"),
     ] },
   ] },
-  { title: "Distans", slots: [
+  { id: "distans", title: "Distans", cardio: true, slots: [
     { id: "distans", label: "Kondition", options: [
       ex("distanslöpning", "Distanslöpning, lugnt tempo", 1, "40 min"),
       ex("cykling", "Cykling, lugnt tempo", 1, "50 min"),
+      ex("promenad", "Rask promenad", 1, "60 min"),
     ] },
   ] },
-  { title: "Pull", slots: [
+  { id: "pull", title: "Pull", slots: [
     { id: "pull-rodd", label: "Rygg, tung rodd", options: [
       ex("skivstångsrodd", "Skivstångsrodd", 4, "8"),
       ex("hantelrodd-böjd", "Hantelrodd, böjd framåt", 4, "10"),
@@ -56,12 +58,14 @@ export const CATALOG = [
       ex("skivstångscurl", "Curl med skivstång", 3, "10"),
     ] },
   ] },
-  { title: "Intervaller", slots: [
+  { id: "intervaller", title: "Intervaller", cardio: true, slots: [
     { id: "intervaller", label: "Kondition", options: [
-      ex("intervaller-löpning", "Intervall: 1 min hårt, 2 min lugnt", 6, "1 min"),
+      ex("intervaller-löpning", "Löpintervall: 1 min hårt, 2 min lugnt", 6, "1 min"),
+      ex("intervaller-cykel", "Cykelintervall: 1 min hårt, 2 min lugnt", 6, "1 min"),
+      ex("backintervaller", "Backintervall: 30 s uppför, gå ner", 8, "30 s"),
     ] },
   ] },
-  { title: "Legs", slots: [
+  { id: "legs", title: "Legs", slots: [
     { id: "legs-knäböj", label: "Knäböj", options: [
       ex("knäböj-skivstång", "Knäböj med skivstång", 4, "8"),
       ex("goblet-squat", "Goblet squat med hantel", 4, "10"),
@@ -86,6 +90,15 @@ export const CATALOG = [
   ] },
 ];
 
+export const passType = (id) => CATALOG.find((p) => p.id === id);
+
+// Pass type per weekday (0 = Monday), null = rest day.
+export const DEFAULT_TEMPLATE = ["push", "distans", "pull", "intervaller", "legs", null, null];
+
+// Stored templates may be damaged; anything that is not seven known pass types or nulls is the default.
+export const normTemplate = (t) =>
+  Array.isArray(t) && t.length === 7 && t.every((x) => x === null || !!passType(x)) ? t : DEFAULT_TEMPLATE;
+
 // Progression. Every exercise has a `step` (0 = catalog start). Two full weeks in a row raise it by one.
 // Strength: reps climb through the range first (a lone number n counts as n..n+2); passing the top
 // resets reps to the bottom and asks for more weight. Weights are not logged, so the note only says
@@ -93,7 +106,10 @@ export const CATALOG = [
 const CARDIO = {
   "distanslöpning": { kind: "minutes", base: 40, by: 5, max: 60 },
   "cykling": { kind: "minutes", base: 50, by: 5, max: 75 },
+  "promenad": { kind: "minutes", base: 60, by: 5, max: 90 },
   "intervaller-löpning": { kind: "sets", by: 1, max: 10 },
+  "intervaller-cykel": { kind: "sets", by: 1, max: 10 },
+  "backintervaller": { kind: "sets", by: 1, max: 12 },
 };
 const BODYWEIGHT = new Set(["pike-armhävningar", "dips-stolar", "pullups", "chinups", "band-pull-apart"]);
 const KG_PER_TIER = 2.5;
@@ -130,14 +146,16 @@ const fill = (slot, o, progress = {}) => {
 
 // choices = { slotId: optionId }, your latest pick per slot; unknown ids fall back to the default.
 // progress = { exerciseId: { step, streak } }.
-function buildPlan(choices, progress) {
-  return CATALOG.map((p) => ({
-    title: p.title,
-    exercises: p.slots.map((slot) => fill(slot, pick(slot, choices[slot.id]), progress)),
-  }));
+function buildPass(typeId, choices = {}, progress = {}) {
+  const p = passType(typeId);
+  if (!p) return null;
+  return { type: p.id, title: p.title, exercises: p.slots.map((slot) => fill(slot, pick(slot, choices[slot.id]), progress)) };
 }
 
-export const PASS_DAYS = CATALOG.length;
+// The week's plan has one entry per weekday: a pass, or null for a rest day.
+const buildPlan = (template, choices, progress) => normTemplate(template).map((t) => buildPass(t, choices, progress));
+
+export const isCardio = (pass) => !!passType(pass?.type)?.cardio;
 
 const pad = (n) => String(n).padStart(2, "0");
 export const isoDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -161,8 +179,8 @@ export function dayIndex(start, today) {
   return Math.round((b - a) / 86400000);
 }
 
-export function createWeek(start, choices = {}, progress = {}) {
-  return { start, plan: buildPlan(choices, progress), done: {}, doneOn: {} };
+export function createWeek(start, choices = {}, progress = {}, template = DEFAULT_TEMPLATE) {
+  return { start, plan: buildPlan(template, choices, progress), done: {}, doneOn: {} };
 }
 
 const exerciseDone = (week, p, e) => {
@@ -173,15 +191,20 @@ const exerciseDone = (week, p, e) => {
 
 // Folds one finished week into the progress: a fully checked exercise extends its streak (and steps up
 // at WEEKS_FOR_STEP), anything else resets it, and so does an exercise that was not in the week.
+// An exercise done on several days this week only counts as full if every one of them was.
 export function evaluateWeek(week, progress) {
+  const full = {};
+  week.plan.forEach((pass, p) => pass?.exercises.forEach((ex, e) => {
+    full[ex.id] = (full[ex.id] ?? true) && exerciseDone(week, p, e);
+  }));
   const next = {};
   for (const [id, v] of Object.entries(progress)) next[id] = { ...v, streak: 0 };
-  week.plan.forEach((pass, p) => pass.exercises.forEach((ex, e) => {
-    const cur = progress[ex.id] ?? { step: 0, streak: 0 };
-    if (!exerciseDone(week, p, e)) next[ex.id] = { step: cur.step, streak: 0 };
-    else if (cur.streak + 1 >= WEEKS_FOR_STEP) next[ex.id] = { step: cur.step + 1, streak: 0 };
-    else next[ex.id] = { step: cur.step, streak: cur.streak + 1 };
-  }));
+  for (const [id, ok] of Object.entries(full)) {
+    const cur = progress[id] ?? { step: 0, streak: 0 };
+    if (!ok) next[id] = { step: cur.step, streak: 0 };
+    else if (cur.streak + 1 >= WEEKS_FOR_STEP) next[id] = { step: cur.step + 1, streak: 0 };
+    else next[id] = { step: cur.step, streak: cur.streak + 1 };
+  }
   return next;
 }
 
@@ -190,44 +213,72 @@ export function evaluateWeek(week, progress) {
 export function advance(weeks, progress, start) {
   const d = parseIso(start);
   d.setDate(d.getDate() - 7);
-  const prevStart = isoDate(d), prev = weeks[prevStart];
+  const prevStart = isoDate(d), prev = weeks[prevStart] && upgradeWeek(weeks[prevStart]);
   if (!prev) return { weeks, progress: evaluateWeek({ plan: [], done: {} }, progress) };
   if (prev.evaluated) return { weeks, progress };
   return { weeks: { ...weeks, [prevStart]: { ...prev, evaluated: true } }, progress: evaluateWeek(prev, progress) };
 }
 
-// Weeks saved before slots existed lack `slot` on their exercises. Rebuild the plan with defaults;
-// exercise order and set counts match, so checked sets stay valid.
+// Older stored weeks: before slots existed (no `slot` on exercises) the plan is rebuilt with defaults;
+// before pass types existed the plan had five passes, one per weekday from Monday. Exercise order and
+// set counts match, so checked sets stay valid in both cases.
 export function upgradeWeek(week, choices = {}, progress = {}) {
-  if (week.plan?.[0]?.exercises?.[0]?.slot) return week;
-  return { ...week, plan: buildPlan(choices, progress), doneOn: week.doneOn ?? {} };
+  if (week.plan?.length === 7) return week;
+  const doneOn = week.doneOn ?? {};
+  if (!week.plan?.[0]?.exercises?.[0]?.slot) return { ...week, plan: buildPlan(DEFAULT_TEMPLATE, choices, progress), doneOn };
+  const plan = DEFAULT_TEMPLATE.map((t, d) => (week.plan[d] ? { type: t, ...week.plan[d] } : null));
+  return { ...week, plan, doneOn };
 }
 
+const clearDay = (week, day) => {
+  const done = { ...week.done };
+  for (const k of Object.keys(done)) if (k.startsWith(`${day}:`)) delete done[k];
+  const doneOn = { ...week.doneOn };
+  delete doneOn[day];
+  return { done, doneOn };
+};
+
 // Swap the exercise in one slot. Checked sets of that exercise are cleared (the sets differ).
-export function applyChoice(week, passDay, exIdx, optionId, progress = {}) {
-  const slot = CATALOG[passDay].slots[exIdx];
-  const option = slot.options.find((o) => o.id === optionId);
+export function applyChoice(week, day, exIdx, optionId, progress = {}) {
+  const pass = week.plan[day];
+  const slot = passType(pass?.type)?.slots[exIdx];
+  const option = slot?.options.find((o) => o.id === optionId);
   if (!option) return week;
-  const plan = week.plan.map((p, i) => i !== passDay ? p : {
+  const plan = week.plan.map((p, i) => i !== day ? p : {
     ...p, exercises: p.exercises.map((e, j) => (j === exIdx ? fill(slot, option, progress) : e)),
   });
   const done = { ...week.done };
-  for (const k of Object.keys(done)) if (k.startsWith(`${passDay}:${exIdx}:`)) delete done[k];
+  for (const k of Object.keys(done)) if (k.startsWith(`${day}:${exIdx}:`)) delete done[k];
   const doneOn = { ...week.doneOn };
   const next = { ...week, plan, done, doneOn };
-  if (!passProgress(next, passDay).complete) delete doneOn[passDay];
+  if (!passProgress(next, day).complete) delete doneOn[day];
   return next;
 }
 
-export const setKey = (passDay, ex, set) => `${passDay}:${ex}:${set}`;
+// Puts other pass types on the week's days (template: one type id or null per day). Days that keep
+// their type are untouched; a changed day starts over with no checked sets.
+export function applyTemplate(week, template, choices = {}, progress = {}) {
+  const t = normTemplate(template);
+  let next = week;
+  t.forEach((type, d) => {
+    if ((next.plan[d]?.type ?? null) === type) return;
+    const cleared = clearDay(next, d);
+    next = { ...next, ...cleared, plan: next.plan.map((p, i) => (i === d ? buildPass(type, choices, progress) : p)) };
+  });
+  return next;
+}
 
-export function passProgress(week, passDay) {
-  const pass = week.plan[passDay];
+export const templateOf = (week) => week.plan.map((p) => p?.type ?? null);
+
+export const setKey = (day, ex, set) => `${day}:${ex}:${set}`;
+
+export function passProgress(week, day) {
+  const pass = week.plan[day];
   let total = 0, done = 0;
-  pass.exercises.forEach((ex, e) => {
+  pass?.exercises.forEach((ex, e) => {
     for (let s = 0; s < ex.sets; s++) {
       total++;
-      if (week.done[setKey(passDay, e, s)]) done++;
+      if (week.done[setKey(day, e, s)]) done++;
     }
   });
   return { total, done, complete: total > 0 && done === total };
@@ -239,31 +290,44 @@ export function applyToggle(week, key, checked, todayIdx) {
   const done = { ...week.done };
   if (checked) done[key] = true; else delete done[key];
   const doneOn = { ...week.doneOn };
-  const passDay = Number(key.split(":")[0]);
+  const day = Number(key.split(":")[0]);
   const next = { ...week, done, doneOn };
-  if (passProgress(next, passDay).complete) doneOn[passDay] = Math.min(Math.max(todayIdx, 0), 6);
-  else delete doneOn[passDay];
+  if (passProgress(next, day).complete) doneOn[day] = Math.min(Math.max(todayIdx, 0), 6);
+  else delete doneOn[day];
   return next;
+}
+
+// Marks every set of the pass from `day` as done (or none of them). `shownOn` is the day the pass was
+// shown on when it was marked, so it stays there.
+export function applyPassDone(week, day, isDone, shownOn) {
+  const pass = week.plan[day];
+  if (!pass) return week;
+  const { done, doneOn } = clearDay(week, day);
+  if (isDone) {
+    pass.exercises.forEach((ex, e) => { for (let s = 0; s < ex.sets; s++) done[setKey(day, e, s)] = true; });
+    doneOn[day] = Math.min(Math.max(shownOn, 0), 6);
+  }
+  return { ...week, done, doneOn };
 }
 
 // Which passes sit on which day. A pass finished on another day stays where it was finished. A pass
 // from an earlier day that is not complete moves to the next day this week that has no pass of its
 // own (and no moved pass yet). If there is none it stays put.
-// Returns { byDay: [[passDay, ...] x7], movedTo: { passDay: day } }.
+// Returns { byDay: [[day, ...] x7], movedTo: { day: day } }; entries are the pass's own (home) day.
 export function schedule(week, todayIdx) {
-  const byDay = Array.from({ length: 7 }, (_, d) => (d < PASS_DAYS ? [d] : []));
+  const byDay = Array.from({ length: 7 }, (_, d) => (week.plan[d] ? [d] : []));
   const movedTo = {};
   const move = (p, d) => {
     byDay[p] = byDay[p].filter((x) => x !== p);
     byDay[d].push(p);
     movedTo[p] = d;
   };
-  for (let p = 0; p < PASS_DAYS; p++) {
+  for (let p = 0; p < 7; p++) {
     const d = week.doneOn?.[p];
-    if (d !== undefined && d !== p && passProgress(week, p).complete) move(p, d);
+    if (week.plan[p] && d !== undefined && d !== p && passProgress(week, p).complete) move(p, d);
   }
-  for (let p = 0; p < PASS_DAYS && p < todayIdx; p++) {
-    if (movedTo[p] !== undefined || passProgress(week, p).complete) continue;
+  for (let p = 0; p < 7 && p < todayIdx; p++) {
+    if (!week.plan[p] || movedTo[p] !== undefined || passProgress(week, p).complete) continue;
     for (let d = Math.max(todayIdx, 0); d < 7; d++) {
       if (byDay[d].length) continue;
       move(p, d);

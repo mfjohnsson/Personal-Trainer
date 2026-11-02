@@ -77,10 +77,22 @@ const BASE = {
 // --- Catalog: the built-in dishes plus the user's own changes (stored by dishes.js) ---
 
 const SLOT_IDS = SLOTS.map((s) => s.id);
+// Lunch and dinner share their dishes ("huvudrätter"); a dish can be limited to one of them.
+export const MAIN = ["lunch", "middag"];
+const isMain = (slot) => MAIN.includes(slot);
+// The meals a dish can be planned for. Breakfasts and snacks stay in their own meal.
+const mealsOf = (slot, meals) => {
+  if (!isMain(slot)) return [slot];
+  const ok = Array.isArray(meals) ? MAIN.filter((m) => meals.includes(m)) : [];
+  return ok.length ? ok : MAIN;
+};
+export const fits = (d, slot) => !!d && d.meals.includes(slot);
+
 // How many dishes a meal needs on offer: two keep a lunch, snack or dinner from landing two days in a
 // row; breakfast may be the same every day, so one is enough.
 export const minDishes = (slot) => (slot === "frukost" ? 1 : 2);
-// Dishes offered in pickers and used by the generator. Filled by applyDishes; the arrays keep their identity.
+// Dishes offered in pickers and used by the generator, per meal. A main dish is in both lunch and
+// dinner unless limited. Filled by applyDishes; the arrays keep their identity.
 export const DISHES = { frukost: [], lunch: [], mellanmal: [], middag: [] };
 const dishById = new Map(); // every dish, hidden ones too, so weeks already planned keep resolving
 const shown = new Set();
@@ -88,12 +100,12 @@ export const dishOf = (id) => dishById.get(id);
 export const isVisible = (id) => shown.has(id);
 
 function register(slot, d, show) {
-  const full = { ...d, slot };
+  const full = { ...d, slot, meals: mealsOf(slot, d.meals) };
   dishById.set(full.id, full);
-  if (show) { shown.add(full.id); DISHES[slot].push(full); }
+  if (show) { shown.add(full.id); for (const m of full.meals) DISHES[m].push(full); }
 }
 
-// overlay = { items: { [id]: { slot, name, kcal, protein, ingredients } }, visible: { [id]: boolean } }.
+// overlay = { items: { [id]: { slot, name, kcal, protein, fat, carbs, ingredients, meals? } }, visible: { [id]: boolean } }.
 // An item with a built-in id replaces that dish; any other id is a dish of the user's own.
 const isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
@@ -118,13 +130,13 @@ export function applyDishes(overlay = {}) {
     }
   }
   for (const [id, it] of Object.entries(items)) {
-    if (!builtIn.has(id) && SLOT_IDS.includes(it.slot)) register(it.slot, { ...it, id }, visible[id] ?? true);
+    if (!builtIn.has(id)) register(it.slot, { ...it, id }, visible[id] ?? true);
   }
   // Damaged or hand-edited flags must not leave a meal without enough dishes (nothing could be planned).
   for (const slot of SLOT_IDS) {
     for (const d of dishById.values()) {
       if (DISHES[slot].length >= minDishes(slot)) break;
-      if (d.slot === slot && !shown.has(d.id)) { shown.add(d.id); DISHES[slot].push(d); }
+      if (fits(d, slot) && !DISHES[slot].includes(d)) { shown.add(d.id); DISHES[slot].push(d); }
     }
   }
 }
@@ -133,52 +145,66 @@ applyDishes();
 export const isBuiltIn = (id) => SLOT_IDS.some((s) => BASE[s].some((b) => b.id === id));
 export const baseDish = (id) => SLOT_IDS.flatMap((s) => BASE[s]).find((b) => b.id === id);
 
-// Every dish in a slot, hidden ones too, for the editor.
-export const allDishes = (slot) => [...dishById.values()].filter((d) => d.slot === slot);
+// Groups in the dish editor: lunch and dinner are one list.
+export const GROUPS = [
+  { id: "frukost", label: "Frukost", slots: ["frukost"] },
+  { id: "huvudratt", label: "Lunch och middag", slots: MAIN },
+  { id: "mellanmal", label: "Mellanmål", slots: ["mellanmal"] },
+];
+export const groupOf = (slot) => GROUPS.find((g) => g.slots.includes(slot));
+
+// Every dish in a group, hidden ones too, for the editor.
+export const allDishes = (group) => {
+  const g = GROUPS.find((x) => x.id === group) ?? groupOf(group);
+  return [...dishById.values()].filter((d) => g.slots.includes(d.slot));
+};
 
 export const UNITS = ["g", "dl", "st", "skivor"];
-const num = (v) => { const s = String(v ?? "").trim().replace(",", "."); return s === "" ? NaN : Number(s); };
 
-// Typed ingredients get the category of a known ingredient with the same name, else Skafferi.
-function categoryOf(name) {
+// Shopping-list category of an ingredient: a known ingredient with the same name, else by keyword.
+const CATEGORY_WORDS = [
+  [KOTT, /kyckling|kalkon|(^|\s)nöt(\s|$|färs|kött|fil)|fläsk|biff|färs|lax|torsk|fisk|tonfisk|makrill|räk|sej|kött|skinka|bacon|korv|lamm|vilt|filé/],
+  [MEJERI, /mjölk|yoghurt|keso|kvarg|(^|\s)ost|ost(\s|$)|(^|\s)ägg(?!planta)|grädde|fil\b|smör(?!.*jordnöt)|crème|kesella/],
+  [BROD, /bröd|ris|pasta|quinoa|matvete|havre|gryn|couscous|bulgur|nudlar|tortilla|knäcke|mjöl/],
+  [GRONT, /potatis|tomat|gurka|sallad|broccoli|morot|lök|paprika|spenat|zucchini|frukt|äpple|banan|bär|grönsak|kål|svamp|avokado|citron|(^|\s)ärt|majs|rotfrukt|sötpotatis|purjo|vitlök|selleri|aubergine|päron|apelsin|druv|melon/],
+];
+export function categoryOf(name) {
   const key = name.toLowerCase();
   for (const d of dishById.values()) for (const [n, , , cat] of d.ingredients) if (n.toLowerCase() === key) return cat;
-  return SKAFFERI;
+  return CATEGORY_WORDS.find(([, re]) => re.test(key))?.[0] ?? SKAFFERI;
 }
 
-// One ingredient per line: "200 g Kycklingfilé". Returns { ingredients } or { error }.
-export function parseIngredients(text) {
-  const lines = String(text ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
-  if (!lines.length) return { error: "Lägg till minst en ingrediens." };
-  if (lines.length > 12) return { error: "Högst 12 ingredienser." };
-  const ingredients = [];
-  for (const [i, line] of lines.entries()) {
-    const m = /^(\d+(?:[.,]\d+)?)\s*(g|dl|st|skivor)\s+(\S.*)$/i.exec(line);
-    if (!m || !(num(m[1]) > 0 && num(m[1]) <= 5000) || m[3].length > 40) {
-      return { error: `Rad ${i + 1}: skriv till exempel "200 g Kycklingfilé". Enheter: ${UNITS.join(", ")}.` };
-    }
-    ingredients.push([m[3], num(m[1]), m[2].toLowerCase(), categoryOf(m[3])]);
-  }
-  return { ingredients };
+// A typical amount for a new ingredient, from its nutrients per 100 g. Only the proportions between
+// the ingredients matter (portions are scaled to the day's target), so this just needs to be sensible.
+export function defaultGrams(food) {
+  if (!food) return 100;
+  if (food.protein >= 15) return 150; // meat, fish, cheese
+  if (food.kcal >= 500) return 15; // oil, butter, nuts, nut butter
+  if (food.carbs >= 50) return 70; // dry pasta, rice, oats
+  if (food.carbs >= 15) return 150; // cooked grains, potatoes
+  return 100; // vegetables, fruit, dairy
 }
 
-export const formatIngredients = (list) => list.map(([n, a, u]) => `${String(a).replace(".", ",")} ${u} ${n}`).join("\n");
-
-// raw = { name, kcal, protein, fat, carbs, ingredients: text }. Returns { values, errors } like calc.validate.
-export function validateDish(raw) {
+const round = Math.round;
+// raw = { name, meals?, ingredients: [[name, amount, unit, category, foodNumber?]], kcal, protein, fat, carbs }
+// (the numbers are worked out from the ingredients by the view). Returns { values, errors }.
+export function validateDish(raw, slot) {
   const errors = {};
   const name = String(raw.name ?? "").trim();
   if (!name) errors.name = "Ange ett namn.";
   else if (name.length > 60) errors.name = "Högst 60 tecken.";
-  const kcal = num(raw.kcal), protein = num(raw.protein), fat = num(raw.fat), carbs = num(raw.carbs);
-  if (!(kcal >= 50 && kcal <= 2500)) errors.kcal = "Ange kalorier mellan 50 och 2 500.";
-  if (!(protein >= 0 && protein <= 250)) errors.protein = "Ange protein mellan 0 och 250 g.";
-  if (!(fat >= 0 && fat <= 250)) errors.fat = "Ange fett mellan 0 och 250 g.";
-  if (!(carbs >= 0 && carbs <= 400)) errors.carbs = "Ange kolhydrater mellan 0 och 400 g.";
-  const parsed = parseIngredients(raw.ingredients);
-  if (parsed.error) errors.ingredients = parsed.error;
-  const round = Math.round;
-  return { values: { name, kcal: round(kcal), protein: round(protein), fat: round(fat), carbs: round(carbs), ingredients: parsed.ingredients }, errors };
+  const ingredients = Array.isArray(raw.ingredients) ? raw.ingredients : [];
+  if (!ingredients.length) errors.ingredients = "Lägg till minst en ingrediens.";
+  else if (ingredients.length > 12) errors.ingredients = "Högst 12 ingredienser.";
+  else if (ingredients.some((i) => !(finite(i[1]) && i[1] > 0 && i[1] <= 5000))) errors.ingredients = "Ange en mängd för varje ingrediens.";
+  else if (!(raw.kcal >= 50)) errors.ingredients = "Rätten blir för liten, under 50 kcal. Öka mängderna.";
+  else if (raw.kcal > 2500) errors.ingredients = "Rätten blir för stor, över 2 500 kcal. Minska mängderna.";
+  const values = {
+    name, kcal: round(raw.kcal ?? 0), protein: round(raw.protein ?? 0), fat: round(raw.fat ?? 0), carbs: round(raw.carbs ?? 0),
+    ingredients: ingredients.map(([n, a, u, cat, nr]) => [n, a, u, cat ?? categoryOf(n), ...(nr ? [nr] : [])]),
+  };
+  if (isMain(slot)) values.meals = mealsOf(slot, raw.meals);
+  return { values, errors };
 }
 
 // Allowed portion factor per slot. Wide enough to reach the target, narrow enough to stay a real meal.
@@ -190,10 +216,10 @@ export const PROTEIN_TOLERANCE = 10; // grams
 
 // Scales (one per meal) that hit both totals exactly while staying as close to 1 as possible, within
 // bounds. Minimum-norm solution of two linear equations; meals that hit a bound are pinned and the
-// rest re-solved.
+// rest re-solved. A meal with equal bounds is fixed.
 function solveScales(meals, bounds, kcal, protein) {
-  const s = meals.map(() => 1);
-  const pinned = new Set();
+  const s = meals.map((_, i) => (bounds[i][0] === bounds[i][1] ? bounds[i][0] : 1));
+  const pinned = new Set(meals.map((_, i) => i).filter((i) => bounds[i][0] === bounds[i][1]));
   for (let round = 0; round <= meals.length; round++) {
     const free = meals.map((_, i) => i).filter((i) => !pinned.has(i));
     if (!free.length) break;
@@ -202,8 +228,9 @@ function solveScales(meals, bounds, kcal, protein) {
     let a = 0, b = 0, c = 0, rhs1 = rk, rhs2 = rp;
     for (const i of free) { a += meals[i].kcal ** 2; b += meals[i].kcal * meals[i].protein; c += meals[i].protein ** 2; rhs1 -= meals[i].kcal; rhs2 -= meals[i].protein; }
     const det = a * c - b * b;
-    if (Math.abs(det) < 1e-9) break;
-    const l1 = (rhs1 * c - rhs2 * b) / det, l2 = (a * rhs2 - b * rhs1) / det;
+    let l1, l2;
+    if (Math.abs(det) < 1e-9) { l1 = a > 0 ? rhs1 / a : 0; l2 = 0; } // one free meal: only calories can be steered
+    else { l1 = (rhs1 * c - rhs2 * b) / det; l2 = (a * rhs2 - b * rhs1) / det; }
     let clamped = false;
     for (const i of free) {
       const v = 1 + l1 * meals[i].kcal + l2 * meals[i].protein;
@@ -218,25 +245,24 @@ function solveScales(meals, bounds, kcal, protein) {
 
 const roundStep = (v) => Math.round(v / STEP) * STEP;
 
-// One day from one dish per slot: returns the rounded portions, the resulting totals and a cost
-// (how far from the target and how far from a normal portion).
-function fitDay(dishes, target) {
-  const bounds = SLOTS.map((s) => BOUNDS[s.id]);
-  const scales = solveScales(dishes, bounds, target.kcal, target.protein)
-    .map((v, i) => Math.min(bounds[i][1], Math.max(bounds[i][0], roundStep(v))));
-  const totals = totalsOf(dishes, scales);
+// One day from one item per slot ({ kcal, protein }), with bounds per item: returns the rounded
+// portions, the totals and a cost (how far from the target and how far from a normal portion).
+function fitDay(items, target, bounds = SLOTS.map((s) => BOUNDS[s.id])) {
+  const scales = solveScales(items, bounds, target.kcal, target.protein)
+    .map((v, i) => (bounds[i][0] === bounds[i][1] ? v : Math.min(bounds[i][1], Math.max(bounds[i][0], roundStep(v)))));
+  const totals = totalsOf(items, scales);
   // Misses only count beyond a small band, well inside the tolerance, so many combinations qualify
   // and variety can decide between them.
   const missK = Math.max(0, Math.abs(totals.kcal - target.kcal) / target.kcal * 100 - 2);
   const missP = Math.max(0, Math.abs(totals.protein - target.protein) - 6);
-  const cost = scales.reduce((a, v) => a + (v - 1) ** 2, 0) + 5 * missK ** 2 + missP ** 2;
+  const cost = scales.reduce((a, v, i) => a + (bounds[i][0] === bounds[i][1] ? 0 : (v - 1) ** 2), 0) + 5 * missK ** 2 + missP ** 2;
   return { scales, totals, cost };
 }
 
-function totalsOf(dishes, scales) {
+function totalsOf(items, scales) {
   return {
-    kcal: Math.round(dishes.reduce((a, d, i) => a + d.kcal * scales[i], 0)),
-    protein: Math.round(dishes.reduce((a, d, i) => a + d.protein * scales[i], 0)),
+    kcal: Math.round(items.reduce((a, d, i) => a + d.kcal * scales[i], 0)),
+    protein: Math.round(items.reduce((a, d, i) => a + d.protein * scales[i], 0)),
   };
 }
 
@@ -251,48 +277,81 @@ function rng(seed) {
   };
 }
 
-const seedOf = (start) => Number(start.replaceAll("-", "")) || 1;
+const seedOf = (start, salt = 0) => (Number(start.replaceAll("-", "")) || 1) + salt * 7919;
 
-// The dishes on a week's menu: everything shown, except what the user left out of that week (a list
-// of ids). A meal never gets fewer than minDishes: if fewer would remain, the first left-out ones in
-// catalog order are put back, so a week can always be planned.
-export function poolFor(off = []) {
-  const skip = new Set(off);
-  return Object.fromEntries(SLOT_IDS.map((slot) => {
-    const on = DISHES[slot].filter((d) => !skip.has(d.id));
-    const min = minDishes(slot);
-    const back = on.length >= min ? [] : DISHES[slot].filter((d) => skip.has(d.id)).slice(0, min - on.length);
-    return [slot, DISHES[slot].filter((d) => on.includes(d) || back.includes(d))];
-  }));
-}
-
-// target = { kcal, protein }; prevSnack = id of last week's final snack (so the rule holds across weeks).
-// Returns { start, target, days: [{ meals: [{ slot, dish, portion }] }] }.
-// `pool` limits the dishes to plan from (see poolFor); it defaults to everything shown.
-export function generateWeek(start, target, prevSnack = null, pool = DISHES) {
-  const rand = rng(seedOf(start));
-  const used = {};
-  const days = [];
-  let prev = { lunch: null, mellanmal: prevSnack, middag: null };
-  for (let d = 0; d < 7; d++) {
-    let best = null;
+// The best day of one dish per meal. `prev` and `next` are the neighbouring days' dishes (lunch,
+// snack, dinner) so nothing repeats on two days in a row; lunch and dinner on the same day differ too.
+// If the dishes on offer are too few for those rules, the rules give way.
+function bestDay(target, prev, next, used, rand, pool = DISHES) {
+  const clash = (l, m, n, o) => o && (m.id === o.mellanmal || l.id === o.lunch || n.id === o.middag);
+  let best = null;
+  for (const strict of [true, false]) {
     for (const f of pool.frukost) for (const l of pool.lunch) for (const m of pool.mellanmal) for (const n of pool.middag) {
-      if (m.id === prev.mellanmal || l.id === prev.lunch || n.id === prev.middag) continue;
+      if (strict && (clash(l, m, n, prev) || clash(l, m, n, next) || l.id === n.id)) continue;
       const dishes = [f, l, m, n];
       const fit = fitDay(dishes, target);
       const variety = 0.15 * ((used[f.id] ?? 0) + (used[l.id] ?? 0) + (used[m.id] ?? 0) + (used[n.id] ?? 0)) + 0.6 * rand();
       const cost = fit.cost + variety;
       if (!best || cost < best.cost) best = { ...fit, cost, dishes };
     }
-    best.dishes.forEach((x) => { used[x.id] = (used[x.id] ?? 0) + 1; });
-    prev = { lunch: best.dishes[1].id, mellanmal: best.dishes[2].id, middag: best.dishes[3].id };
-    days.push({ meals: best.dishes.map((x, i) => ({ slot: SLOTS[i].id, dish: x.id, portion: best.scales[i] })) });
+    if (best) break;
   }
+  best.dishes.forEach((x) => { used[x.id] = (used[x.id] ?? 0) + 1; });
+  return { meals: best.dishes.map((x, i) => ({ slot: SLOTS[i].id, dish: x.id, portion: best.scales[i] })) };
+}
+
+const usedIn = (days) => {
+  const used = {};
+  for (const day of days) for (const m of day.meals) used[m.dish] = (used[m.dish] ?? 0) + 1;
+  return used;
+};
+
+// Plans days `from`..6 of `days` (earlier days are kept). `prev` = the dishes of the day before.
+function planDays(days, from, target, prev, rand, pool = DISHES) {
+  const used = usedIn(days.slice(0, from));
+  const out = days.slice(0, from);
+  for (let d = from; d < 7; d++) {
+    out.push(bestDay(target, prev, null, used, rand, pool));
+    prev = prevOf(out[d]);
+  }
+  return out;
+}
+
+const prevOf = (day) => ({ lunch: day?.meals[1].dish ?? null, mellanmal: day?.meals[2].dish ?? null, middag: day?.meals[3].dish ?? null });
+
+// target = { kcal, protein }; prevSnack = id of last week's final snack (so the rule holds across weeks).
+// Returns { start, target, days: [{ meals: [{ slot, dish, portion, custom? }] }] }.
+export function generateWeek(start, target, prevSnack = null, pool = DISHES) {
+  const days = planDays([], 0, target, { lunch: null, mellanmal: prevSnack, middag: null }, rng(seedOf(start)), pool);
   return { start, target, days };
 }
 
+// A new suggestion for days `from`..6; earlier days stay as they are. A day where something else was
+// eaten is kept too (what you typed is not thrown away). `prevSnack` = last week's final snack, used
+// when starting on Monday. `salt` gives another suggestion.
+export function regenerateFrom(week, from, salt = 1, prevSnack = null) {
+  const f = Math.max(0, Math.min(7, from));
+  const rand = rng(seedOf(week.start, salt));
+  const days = week.days.slice(0, f);
+  const used = usedIn(days);
+  for (let d = f; d < 7; d++) {
+    const keep = week.days[d].meals.some((m) => m.custom);
+    const prev = d > 0 ? prevOf(days[d - 1]) : { lunch: null, mellanmal: prevSnack, middag: null };
+    const next = keep || d === 6 || !week.days[d + 1].meals.some((m) => m.custom) ? null : prevOf(week.days[d + 1]);
+    days.push(keep ? week.days[d] : bestDay(week.target, prev, next, used, rand));
+  }
+  return { ...week, days };
+}
+
+// What a planned meal counts as: the dish, or what you ate instead ({ name, kcal, protein }).
+const itemOf = (m) => (m.custom ? { kcal: m.custom.kcal, protein: m.custom.protein } : dishOf(m.dish));
+
 // Scaled numbers for one planned meal: kcal, protein and ingredient amounts.
 export function mealInfo(meal) {
+  if (meal.custom) {
+    const c = meal.custom;
+    return { name: c.name || "Något annat", kcal: Math.round(c.kcal), protein: Math.round(c.protein), fat: 0, carbs: 0, ingredients: [], custom: true };
+  }
   const d = dishOf(meal.dish);
   const q = meal.portion;
   return {
@@ -317,10 +376,24 @@ export function dayTotals(day) {
   }, { kcal: 0, protein: 0, fat: 0, carbs: 0 });
 }
 
-const dayFrom = (dishes, target) => {
-  const fit = fitDay(dishes, target);
-  return { meals: dishes.map((d, k) => ({ slot: SLOTS[k].id, dish: d.id, portion: fit.scales[k] })) };
-};
+// Re-fits one day's portions to the target. Meals up to and including the last "ate something else"
+// are already eaten and stay as they are; only the meals after it are scaled.
+function refitDay(day, target) {
+  const lastCustom = day.meals.reduce((a, m, i) => (m.custom ? i : a), -1);
+  const items = day.meals.map(itemOf);
+  const bounds = day.meals.map((m, i) => (i <= lastCustom ? [m.custom ? 1 : m.portion, m.custom ? 1 : m.portion] : BOUNDS[m.slot]));
+  const fit = fitDay(items, target, bounds);
+  return { meals: day.meals.map((m, i) => (m.custom ? m : { slot: m.slot, dish: m.dish, portion: fit.scales[i] })) };
+}
+
+const resolves = (day) => day.meals.every((m) => m.custom || dishOf(m.dish));
+
+// The dish at the day's other main meal (lunch for dinner and the other way round), or null.
+export function otherMain(day, slot) {
+  if (!isMain(slot)) return null;
+  const m = day.meals.find((x) => isMain(x.slot) && x.slot !== slot);
+  return m && !m.custom ? m.dish : null;
+}
 
 // Returns a copy of the week where one slot of one day uses another dish. The day's portions are
 // re-fitted to the target. Some combinations can't reach it within normal portions; the view flags
@@ -329,20 +402,86 @@ export function changeDish(week, dayIdx, slot, dishId) {
   const slotIdx = SLOTS.findIndex((s) => s.id === slot);
   const chosen = dishOf(dishId);
   const day = week.days[dayIdx];
-  if (slotIdx < 0 || chosen?.slot !== slot || !day) return null;
-  const dishes = day.meals.map((m, i) => (i === slotIdx ? chosen : dishOf(m.dish)));
-  return { ...week, days: week.days.map((x, i) => (i === dayIdx ? dayFrom(dishes, week.target) : x)) };
+  if (slotIdx < 0 || !fits(chosen, slot) || !day) return null;
+  if (otherMain(day, slot) === dishId) return null;
+  const meals = day.meals.map((m, i) => (i === slotIdx ? { slot, dish: dishId, portion: 1 } : m));
+  return { ...week, days: week.days.map((x, i) => (i === dayIdx ? refitDay({ meals }, week.target) : x)) };
+}
+
+// "Ate something else": the meal counts as { name, kcal, protein } and the meals after it are re-fitted.
+// `custom` null puts the planned dish back. Null for an unknown day or slot.
+export function setCustom(week, dayIdx, slot, custom) {
+  const slotIdx = SLOTS.findIndex((s) => s.id === slot);
+  const day = week.days[dayIdx];
+  if (slotIdx < 0 || !day) return null;
+  const meals = day.meals.map((m, i) => {
+    if (i !== slotIdx) return m;
+    const { custom: _old, ...plain } = m;
+    return custom ? { ...plain, portion: 1, custom } : { ...plain, portion: 1 };
+  });
+  return { ...week, days: week.days.map((x, i) => (i === dayIdx ? refitDay({ meals }, week.target) : x)) };
+}
+
+export function validateCustom(raw) {
+  const errors = {};
+  const num = (v) => { const s = String(v ?? "").trim().replace(",", "."); return s === "" ? NaN : Number(s); };
+  const name = String(raw.name ?? "").trim().slice(0, 40);
+  const kcal = num(raw.kcal), protein = num(raw.protein);
+  if (!(kcal >= 0 && kcal <= 4000)) errors.kcal = "Ange kalorier mellan 0 och 4 000.";
+  if (!(protein >= 0 && protein <= 300)) errors.protein = "Ange protein mellan 0 och 300 g.";
+  return { values: { name, kcal: Math.round(kcal), protein: Math.round(protein) }, errors };
 }
 
 // A stored week with the shape the views rely on (stored data can be damaged).
+const validMeal = (m) => isObject(m) && typeof m.dish === "string" && finite(m.portion)
+  && (m.custom === undefined || (isObject(m.custom) && finite(m.custom.kcal) && finite(m.custom.protein)));
 export const isWeek = (w) => isObject(w) && isObject(w.target) && Array.isArray(w.days) && w.days.length === 7
-  && w.days.every((d) => isObject(d) && Array.isArray(d.meals) && d.meals.length === SLOTS.length
-    && d.meals.every((m) => isObject(m) && typeof m.dish === "string" && finite(m.portion)));
+  && w.days.every((d) => isObject(d) && Array.isArray(d.meals) && d.meals.length === SLOTS.length && d.meals.every(validMeal));
 
 // Re-fits every day that uses one of `ids` (a set of dish ids), after those dishes were edited.
 export function refitWeek(week, ids) {
-  const days = week.days.map((day) => (day.meals.some((m) => ids.has(m.dish)) && day.meals.every((m) => dishOf(m.dish))
-    ? dayFrom(day.meals.map((m) => dishOf(m.dish)), week.target) : day));
+  const days = week.days.map((day) => (day.meals.some((m) => !m.custom && ids.has(m.dish)) && resolves(day) ? refitDay(day, week.target) : day));
+  return { ...week, days };
+}
+
+// Same dishes, portions fitted to a new target (after a weigh-in or a new profile).
+// A day that can't reach the new target with its dishes (and has nothing eaten off-plan) is planned
+// again; the other days keep their dishes.
+export function retarget(week, target) {
+  const days = week.days.map((day) => (resolves(day) ? refitDay(day, target) : day));
+  const rand = rng(seedOf(week.start, 3));
+  days.forEach((day, d) => {
+    if (!resolves(day) || day.meals.some((m) => m.custom) || withinTarget(dayTotals(day), target)) return;
+    days[d] = bestDay(target, d > 0 ? prevOf(days[d - 1]) : null, d < 6 ? prevOf(days[d + 1]) : null, usedIn(days), rand);
+  });
+  return { ...week, target, days };
+}
+
+// Days `from`..6 that use a dish no longer on offer for that meal (hidden, or limited to the other
+// main meal) get the best fitting dish on offer in its place,
+// keeping the rules: not the same as the day before or after, lunch and dinner differ.
+export function replaceHidden(week, from) {
+  const days = [...week.days];
+  for (let d = Math.max(0, from); d < 7; d++) {
+    days[d].meals.forEach((m, i) => {
+      if (m.custom || (isVisible(m.dish) && fits(dishOf(m.dish), m.slot)) || !resolves(days[d])) return;
+      const avoid = new Set([days[d - 1]?.meals[i].dish, days[d + 1]?.meals[i].dish,
+        ...(isMain(m.slot) ? days[d].meals.filter((x, j) => j !== i && isMain(x.slot)).map((x) => x.dish) : [])]);
+      let best = null;
+      for (const strict of [true, false]) {
+        for (const cand of DISHES[m.slot]) {
+          if (strict && avoid.has(cand.id)) continue;
+          const meals = days[d].meals.map((x, j) => (j === i ? { slot: x.slot, dish: cand.id, portion: 1 } : x));
+          const day = refitDay({ meals }, week.target);
+          const t = dayTotals(day);
+          const cost = Math.abs(t.kcal - week.target.kcal) / week.target.kcal * 100 + Math.abs(t.protein - week.target.protein) / 5;
+          if (!best || cost < best.cost) best = { cost, day };
+        }
+        if (best) break;
+      }
+      if (best) days[d] = best.day;
+    });
+  }
   return { ...week, days };
 }
 

@@ -55,9 +55,18 @@ const SYNONYMS = { tillagad: "kokt", tillagat: "kokt", tillagade: "kokt", kokta:
 // written that way in the data, so each long word is shortened until something matches every word;
 // failing that, foods matching at least one word are listed.
 export function search(query, limit = 6) {
+  const hits = searchText(query, limit);
+  // A name the built-in dishes use ("kycklingfilé") goes first with the food chosen for it.
+  const preferred = foodByNumber(PREFERRED[norm(query)]);
+  return preferred ? [preferred, ...hits.filter((f) => f !== preferred)].slice(0, limit) : hits;
+}
+
+function searchText(query, limit) {
   const words = tokens(query).map((t) => SYNONYMS[t] ?? t);
   if (!db || !words.length) return [];
-  const score = (f, first) => (f.key.startsWith(first) ? 0 : 20) + f.key.split(" ").length * 3 + f.key.length * 0.2 - (/ rå( |$)/.test(f.key) ? 2 : 0);
+  // Words that start a word in the name rank above words found inside one ("kokt" in "okokt").
+  const wordStarts = (f) => words.filter((t) => !f.key.split(/[\s,]+/).some((w) => w.startsWith(t))).length * 10;
+  const score = (f, first) => (f.key.startsWith(first) ? 0 : 20) + wordStarts(f) + f.key.split(" ").length * 3 + f.key.length * 0.2 - (/ rå( |$)/.test(f.key) ? 2 : 0);
   const rank = (hits, first) => hits.sort((a, b) => score(a, first) - score(b, first) || a.name.localeCompare(b.name, "sv")).slice(0, limit);
   const shorten = (cut) => words.map((t) => (t.length > 5 ? t.slice(0, Math.max(5, t.length - cut)) : t));
   for (const cut of [0, 2, 4, 6]) {
