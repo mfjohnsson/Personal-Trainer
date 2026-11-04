@@ -293,8 +293,11 @@ details.meal > summary::-webkit-details-marker { display: none; }
 .meal-slot { grid-column: 1 / -1; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); }
 .meal-name { font-weight: 600; min-width: 0; }
 .meal-kcal { color: var(--ink-3); font-size: 0.85rem; white-space: nowrap; font-variant-numeric: tabular-nums; align-self: center; }
+.shake-row { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; padding: 10px 0; border-top: 1px solid var(--line); }
+.shake-add { padding: 4px 0 8px; display: flex; flex-direction: column; gap: 8px; }
 .meal-body { display: flex; flex-direction: column; gap: 8px; padding: 0 0 12px; }
-.meal-body .pick { flex: none; width: 100%; }
+.meal-body .pick, .topup .pick { flex: none; width: 100%; }
+.topup { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
 .pick-label { font-size: 0.8rem; font-weight: 600; color: var(--ink-2); }
 .custom-form { padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
 .custom-form .field input { background: var(--card); }

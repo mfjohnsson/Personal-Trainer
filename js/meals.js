@@ -45,8 +45,8 @@ const BASE = {
       g("Fläskfilé", 200, KOTT), g("Fullkornsris, tillagat", 150, BROD), g("Grönsaker", 100, GRONT)]),
   ],
   mellanmal: [
-    dish("snack-shake", "Proteinshake", 302, 35, 11, 16, [
-      g("Proteinpulver", 30, SKAFFERI), ["Mjölk", 3, "dl", MEJERI]]),
+    dish("snack-shake", "Proteinshake", 291, 37, 10, 14, [
+      ["Proteinpulver", 1, "dl", SKAFFERI], ["Mjölk", 2.5, "dl", MEJERI]]),
     dish("snack-yoghurt", "Turkisk yoghurt, jordnötssmör och bär", 407, 13, 29, 22, [
       g("Turkisk yoghurt", 250, MEJERI), g("Jordnötssmör", 15, SKAFFERI), g("Bär", 80, GRONT)]),
     dish("snack-keso", "Keso, frukt och nötter", 461, 32, 26, 22, [
@@ -96,6 +96,13 @@ export const minDishes = (slot) => (slot === "frukost" ? 1 : 2);
 export const DISHES = { frukost: [], lunch: [], mellanmal: [], middag: [] };
 const dishById = new Map(); // every dish, hidden ones too, so weeks already planned keep resolving
 const shown = new Set();
+export const SHAKE_ID = "snack-shake";
+let topup = SHAKE_ID; // the snack used as protein top-up (see below), set by applyDishes
+export const topupId = () => topup;
+// A top-up only helps if it brings more protein per kcal than the meals it makes room for (they give
+// about 7–10 g per 100 kcal); a shake gives about 13. Below this it barely moves the day's protein.
+export const TOPUP_MIN_DENSITY = 10; // g protein per 100 kcal
+export const isTopupCandidate = (d) => !!d && d.slot === "mellanmal" && d.kcal > 0 && (d.protein * 100) / d.kcal >= TOPUP_MIN_DENSITY;
 export const dishOf = (id) => dishById.get(id);
 export const isVisible = (id) => shown.has(id);
 
@@ -105,7 +112,8 @@ function register(slot, d, show) {
   if (show) { shown.add(full.id); for (const m of full.meals) DISHES[m].push(full); }
 }
 
-// overlay = { items: { [id]: { slot, name, kcal, protein, fat, carbs, ingredients, meals? } }, visible: { [id]: boolean } }.
+// overlay = { items: { [id]: { slot, name, kcal, protein, fat, carbs, ingredients, meals? } }, visible: { [id]: boolean },
+//   topup?: id of the snack used as protein top-up }.
 // An item with a built-in id replaces that dish; any other id is a dish of the user's own.
 const isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
@@ -132,6 +140,8 @@ export function applyDishes(overlay = {}) {
   for (const [id, it] of Object.entries(items)) {
     if (!builtIn.has(id)) register(it.slot, { ...it, id }, visible[id] ?? true);
   }
+  // The top-up may be any protein-rich snack, also one hidden from the snack rotation.
+  topup = typeof raw.topup === "string" && isTopupCandidate(dishById.get(raw.topup)) ? raw.topup : SHAKE_ID;
   // Damaged or hand-edited flags must not leave a meal without enough dishes (nothing could be planned).
   for (const slot of SLOT_IDS) {
     for (const d of dishById.values()) {
@@ -231,14 +241,19 @@ function solveScales(meals, bounds, kcal, protein) {
     let l1, l2;
     if (Math.abs(det) < 1e-9) { l1 = a > 0 ? rhs1 / a : 0; l2 = 0; } // one free meal: only calories can be steered
     else { l1 = (rhs1 * c - rhs2 * b) / det; l2 = (a * rhs2 - b * rhs1) / det; }
-    let clamped = false;
+    // Only the meal furthest outside its bounds is pinned per round; the others are solved again,
+    // since pinning one can bring the rest back inside (pinning all at once can push a meal to the
+    // wrong bound).
+    let worst = -1, worstBy = 0;
     for (const i of free) {
       const v = 1 + l1 * meals[i].kcal + l2 * meals[i].protein;
       const [lo, hi] = bounds[i];
       s[i] = Math.min(hi, Math.max(lo, v));
-      if (s[i] !== v) { pinned.add(i); clamped = true; }
+      const by = Math.abs(s[i] - v);
+      if (by > worstBy) { worst = i; worstBy = by; }
     }
-    if (!clamped) break;
+    if (worst < 0) break;
+    pinned.add(worst);
   }
   return s;
 }
@@ -247,15 +262,19 @@ const roundStep = (v) => Math.round(v / STEP) * STEP;
 
 // One day from one item per slot ({ kcal, protein }), with bounds per item: returns the rounded
 // portions, the totals and a cost (how far from the target and how far from a normal portion).
-function fitDay(items, target, bounds = SLOTS.map((s) => BOUNDS[s.id])) {
-  const scales = solveScales(items, bounds, target.kcal, target.protein)
+// `fixed` ({ kcal, protein }) is eaten besides the items, e.g. the top-up; it counts in the totals.
+function fitDay(items, target, bounds = SLOTS.map((s) => BOUNDS[s.id]), fixed = { kcal: 0, protein: 0 }) {
+  const scales = solveScales(items, bounds, target.kcal - fixed.kcal, target.protein - fixed.protein)
     .map((v, i) => (bounds[i][0] === bounds[i][1] ? v : Math.min(bounds[i][1], Math.max(bounds[i][0], roundStep(v)))));
-  const totals = totalsOf(items, scales);
+  const own = totalsOf(items, scales);
+  const totals = { kcal: own.kcal + Math.round(fixed.kcal), protein: own.protein + Math.round(fixed.protein) };
   // Misses only count beyond a small band, well inside the tolerance, so many combinations qualify
   // and variety can decide between them.
   const missK = Math.max(0, Math.abs(totals.kcal - target.kcal) / target.kcal * 100 - 2);
   const missP = Math.max(0, Math.abs(totals.protein - target.protein) - 6);
-  const cost = scales.reduce((a, v, i) => a + (bounds[i][0] === bounds[i][1] ? 0 : (v - 1) ** 2), 0) + 5 * missK ** 2 + missP ** 2;
+  // A portion beyond NORMAL_MAX costs extra, so the planner picks dishes (or a top-up) that avoid it.
+  const size = (v) => (v - 1) ** 2 + BIG_COST * Math.max(0, v - NORMAL_MAX) ** 2;
+  const cost = scales.reduce((a, v, i) => a + (bounds[i][0] === bounds[i][1] ? 0 : size(v)), 0) + 5 * missK ** 2 + missP ** 2;
   return { scales, totals, cost };
 }
 
@@ -284,12 +303,13 @@ const seedOf = (start, salt = 0) => (Number(start.replaceAll("-", "")) || 1) + s
 // If the dishes on offer are too few for those rules, the rules give way.
 function bestDay(target, prev, next, used, rand, pool = DISHES) {
   const clash = (l, m, n, o) => o && (m.id === o.mellanmal || l.id === o.lunch || n.id === o.middag);
+  const ex = topupDish();
   let best = null;
   for (const strict of [true, false]) {
     for (const f of pool.frukost) for (const l of pool.lunch) for (const m of pool.mellanmal) for (const n of pool.middag) {
       if (strict && (clash(l, m, n, prev) || clash(l, m, n, next) || l.id === n.id)) continue;
       const dishes = [f, l, m, n];
-      const fit = fitDay(dishes, target);
+      const fit = fitPlan(dishes, target, SLOTS.map((s) => BOUNDS[s.id]), "auto", ex);
       const variety = 0.15 * ((used[f.id] ?? 0) + (used[l.id] ?? 0) + (used[m.id] ?? 0) + (used[n.id] ?? 0)) + 0.6 * rand();
       const cost = fit.cost + variety;
       if (!best || cost < best.cost) best = { ...fit, cost, dishes };
@@ -297,7 +317,10 @@ function bestDay(target, prev, next, used, rand, pool = DISHES) {
     if (best) break;
   }
   best.dishes.forEach((x) => { used[x.id] = (used[x.id] ?? 0) + 1; });
-  return { meals: best.dishes.map((x, i) => ({ slot: SLOTS[i].id, dish: x.id, portion: best.scales[i] })) };
+  return {
+    ...(best.extra ? { extra: { dish: ex.id, portion: best.extra } } : {}),
+    meals: best.dishes.map((x, i) => ({ slot: SLOTS[i].id, dish: x.id, portion: best.scales[i] })),
+  };
 }
 
 const usedIn = (days) => {
@@ -319,11 +342,15 @@ function planDays(days, from, target, prev, rand, pool = DISHES) {
 
 const prevOf = (day) => ({ lunch: day?.meals[1].dish ?? null, mellanmal: day?.meals[2].dish ?? null, middag: day?.meals[3].dish ?? null });
 
+// Bumped when the planner changes in a way stored weeks should pick up (2: protein top-up; 3: only
+// protein-rich top-ups).
+export const PLAN_VERSION = 3;
+
 // target = { kcal, protein }; prevSnack = id of last week's final snack (so the rule holds across weeks).
 // Returns { start, target, days: [{ meals: [{ slot, dish, portion, custom? }] }] }.
 export function generateWeek(start, target, prevSnack = null, pool = DISHES) {
   const days = planDays([], 0, target, { lunch: null, mellanmal: prevSnack, middag: null }, rng(seedOf(start)), pool);
-  return { start, target, days };
+  return { start, target, v: PLAN_VERSION, days };
 }
 
 // A new suggestion for days `from`..6; earlier days stay as they are. A day where something else was
@@ -338,7 +365,7 @@ export function regenerateFrom(week, from, salt = 1, prevSnack = null) {
     const keep = week.days[d].meals.some((m) => m.custom);
     const prev = d > 0 ? prevOf(days[d - 1]) : { lunch: null, mellanmal: prevSnack, middag: null };
     const next = keep || d === 6 || !week.days[d + 1].meals.some((m) => m.custom) ? null : prevOf(week.days[d + 1]);
-    days.push(keep ? week.days[d] : bestDay(week.target, prev, next, used, rand));
+    days.push(keep ? week.days[d] : keepChoice(bestDay(week.target, prev, next, used, rand), week.days[d], week.target));
   }
   return { ...week, days };
 }
@@ -369,21 +396,108 @@ export function mealInfo(meal) {
   };
 }
 
+// --- Protein top-up: an extra snack on top of the four meals ---
+// Reaching the protein target with four meals alone can make a meal very big (300 g cottage cheese).
+// Instead the day gets a top-up (day.extra = { dish, portion, manual? }), by default the protein shake,
+// and the meals stay near a normal portion. It is added by itself when some meal would otherwise be
+// more than NORMAL_MAX of a normal portion or the day falls short of protein; `manual` = added by you and always kept; day.extraOff = you
+// removed it, so it is not added again. The amount is fitted with the day in half portions.
+// The older stored form `day.shake` (true or a number of portions) reads as a manual shake.
+export const NORMAL_MAX = 1.25;
+const BIG_COST = 20; // weight of the part of a portion beyond NORMAL_MAX (see fitDay)
+const EXTRA_BOUNDS = [0.5, 3];
+const EXTRA_STEP = 0.5;
+const EXTRA_COST = 0.02; // a small price, so the top-up is only used when it clearly helps
+
+export const topupDish = () => dishOf(topup);
+
+function extraOf(day) {
+  const e = day.extra;
+  if (isObject(e) && typeof e.dish === "string" && finite(e.portion) && e.portion > 0) return e;
+  const s = day.shake === true ? 1 : finite(day.shake) && day.shake > 0 ? day.shake : 0;
+  return s ? { dish: SHAKE_ID, portion: s, manual: true } : null;
+}
+const extraMeal = (day) => {
+  const e = extraOf(day);
+  return e && dishOf(e.dish) ? { slot: "mellanmal", dish: e.dish, portion: e.portion } : null;
+};
+
+// The meals of a day as eaten, the top-up last. For totals and the shopping list.
+export const dayItems = (day) => [...day.meals, ...(extraMeal(day) ? [extraMeal(day)] : [])];
+
+// The scaled numbers of the day's top-up and whether you added it yourself, or null.
+export const extraInfo = (day) => (extraMeal(day) ? { ...mealInfo(extraMeal(day)), manual: !!extraOf(day).manual } : null);
+
 export function dayTotals(day) {
-  return day.meals.reduce((a, m) => {
+  return dayItems(day).reduce((a, m) => {
     const i = mealInfo(m);
     return { kcal: a.kcal + i.kcal, protein: a.protein + i.protein, fat: a.fat + i.fat, carbs: a.carbs + i.carbs };
   }, { kcal: 0, protein: 0, fat: 0, carbs: 0 });
 }
 
+// Fits the meals with or without the top-up `ex`. mode "off": never; "on": always; "auto": only when a
+// meal would otherwise pass NORMAL_MAX or protein falls short, and the top-up gives a better day (and
+// is not already the snack).
+// Every top-up amount in half portions is tried with the meals fitted around it; the best day wins.
+// Returns fitDay's result plus `extra` (portions, 0 for none).
+function fitPlan(items, target, bounds, mode, ex) {
+  const plain = { ...fitDay(items, target, bounds), extra: 0 };
+  if (!ex || mode === "off") return plain;
+  const big = plain.scales.some((v, i) => bounds[i][0] !== bounds[i][1] && v > NORMAL_MAX + 1e-9);
+  const short = plain.totals.protein < target.protein - PROTEIN_TOLERANCE;
+  // When the snack already is the top-up dish, the snack itself grows instead of a second one.
+  if (mode === "auto" && (!(big || short) || items.includes(ex))) return plain;
+  let withExtra = null;
+  for (let extra = EXTRA_BOUNDS[0]; extra <= EXTRA_BOUNDS[1]; extra += EXTRA_STEP) {
+    const fit = fitDay(items, target, bounds, { kcal: ex.kcal * extra, protein: ex.protein * extra });
+    if (!withExtra || fit.cost < withExtra.cost) withExtra = { ...fit, extra };
+  }
+  withExtra.cost += EXTRA_COST;
+  return mode === "on" || withExtra.cost < plain.cost ? withExtra : plain;
+}
+
 // Re-fits one day's portions to the target. Meals up to and including the last "ate something else"
-// are already eaten and stay as they are; only the meals after it are scaled.
+// are already eaten and stay as they are; only the meals after it are scaled. The top-up is decided
+// again (unless you added or removed it yourself).
 function refitDay(day, target) {
   const lastCustom = day.meals.reduce((a, m, i) => (m.custom ? i : a), -1);
   const items = day.meals.map(itemOf);
   const bounds = day.meals.map((m, i) => (i <= lastCustom ? [m.custom ? 1 : m.portion, m.custom ? 1 : m.portion] : BOUNDS[m.slot]));
-  const fit = fitDay(items, target, bounds);
-  return { meals: day.meals.map((m, i) => (m.custom ? m : { slot: m.slot, dish: m.dish, portion: fit.scales[i] })) };
+  const old = extraOf(day);
+  const mode = day.extraOff ? "off" : old?.manual ? "on" : "auto";
+  const ex = mode === "on" ? dishOf(old.dish) : topupDish();
+  const fit = fitPlan(items, target, bounds, mode, ex);
+  const { shake: _s, extra: _e, ...plain } = day;
+  return {
+    ...plain,
+    ...(fit.extra ? { extra: { dish: ex.id, portion: fit.extra, ...(mode === "on" ? { manual: true } : {}) } } : {}),
+    meals: day.meals.map((m, i) => (m.custom ? m : { slot: m.slot, dish: m.dish, portion: fit.scales[i] })),
+  };
+}
+
+// A re-planned day keeps what you chose about the top-up on the old day.
+function keepChoice(fresh, old, target) {
+  if (old.extraOff) return refitDay({ ...fresh, extraOff: true }, target);
+  const e = extraOf(old);
+  return e?.manual ? refitDay({ ...fresh, extra: e }, target) : fresh;
+}
+
+const plainDay = ({ shake: _s, extra: _e, extraOff: _o, ...plain }) => plain;
+
+// A top-up can be added unless the day's snack already is that dish (then the snack itself is it).
+export const canAddExtra = (day) => !!topupDish() && !day.meals.some((m) => !m.custom && m.dish === topup);
+
+// The day as it would be with the top-up added by you, re-fitted; null when it can't be added.
+// Also shows the effect before you add it.
+export const withExtra = (day, target) => (canAddExtra(day) ? refitDay({ ...plainDay(day), extra: { dish: topup, portion: 1, manual: true } }, target) : null);
+
+// Returns a copy of the week where you added (on) or removed (off) the top-up on one day, the day
+// re-fitted. Null for an unknown day or when the top-up dish is missing.
+export function setExtra(week, dayIdx, on) {
+  const day = week.days[dayIdx];
+  if (!day) return null;
+  const next = on ? withExtra(day, week.target) : refitDay({ ...plainDay(day), extraOff: true }, week.target);
+  return next && { ...week, days: week.days.map((x, i) => (i === dayIdx ? next : x)) };
 }
 
 const resolves = (day) => day.meals.every((m) => m.custom || dishOf(m.dish));
@@ -405,7 +519,7 @@ export function changeDish(week, dayIdx, slot, dishId) {
   if (slotIdx < 0 || !fits(chosen, slot) || !day) return null;
   if (otherMain(day, slot) === dishId) return null;
   const meals = day.meals.map((m, i) => (i === slotIdx ? { slot, dish: dishId, portion: 1 } : m));
-  return { ...week, days: week.days.map((x, i) => (i === dayIdx ? refitDay({ meals }, week.target) : x)) };
+  return { ...week, days: week.days.map((x, i) => (i === dayIdx ? refitDay({ ...day, meals }, week.target) : x)) };
 }
 
 // "Ate something else": the meal counts as { name, kcal, protein } and the meals after it are re-fitted.
@@ -419,7 +533,7 @@ export function setCustom(week, dayIdx, slot, custom) {
     const { custom: _old, ...plain } = m;
     return custom ? { ...plain, portion: 1, custom } : { ...plain, portion: 1 };
   });
-  return { ...week, days: week.days.map((x, i) => (i === dayIdx ? refitDay({ meals }, week.target) : x)) };
+  return { ...week, days: week.days.map((x, i) => (i === dayIdx ? refitDay({ ...day, meals }, week.target) : x)) };
 }
 
 export function validateCustom(raw) {
@@ -435,12 +549,16 @@ export function validateCustom(raw) {
 // A stored week with the shape the views rely on (stored data can be damaged).
 const validMeal = (m) => isObject(m) && typeof m.dish === "string" && finite(m.portion)
   && (m.custom === undefined || (isObject(m.custom) && finite(m.custom.kcal) && finite(m.custom.protein)));
+const extraPortion = (p) => finite(p) && p >= EXTRA_BOUNDS[0] && p <= EXTRA_BOUNDS[1] && p % EXTRA_STEP === 0;
+const validExtra = (d) => (d.shake === undefined || d.shake === true || extraPortion(d.shake))
+  && (d.extra === undefined || (isObject(d.extra) && typeof d.extra.dish === "string" && extraPortion(d.extra.portion)))
+  && (d.extraOff === undefined || typeof d.extraOff === "boolean");
 export const isWeek = (w) => isObject(w) && isObject(w.target) && Array.isArray(w.days) && w.days.length === 7
-  && w.days.every((d) => isObject(d) && Array.isArray(d.meals) && d.meals.length === SLOTS.length && d.meals.every(validMeal));
+  && w.days.every((d) => isObject(d) && validExtra(d) && Array.isArray(d.meals) && d.meals.length === SLOTS.length && d.meals.every(validMeal));
 
 // Re-fits every day that uses one of `ids` (a set of dish ids), after those dishes were edited.
 export function refitWeek(week, ids) {
-  const days = week.days.map((day) => (day.meals.some((m) => !m.custom && ids.has(m.dish)) && resolves(day) ? refitDay(day, week.target) : day));
+  const days = week.days.map((day) => ((day.meals.some((m) => !m.custom && ids.has(m.dish)) || ids.has(topup) || (extraOf(day) && ids.has(extraOf(day).dish))) && resolves(day) ? refitDay(day, week.target) : day));
   return { ...week, days };
 }
 
@@ -452,9 +570,9 @@ export function retarget(week, target) {
   const rand = rng(seedOf(week.start, 3));
   days.forEach((day, d) => {
     if (!resolves(day) || day.meals.some((m) => m.custom) || withinTarget(dayTotals(day), target)) return;
-    days[d] = bestDay(target, d > 0 ? prevOf(days[d - 1]) : null, d < 6 ? prevOf(days[d + 1]) : null, usedIn(days), rand);
+    days[d] = keepChoice(bestDay(target, d > 0 ? prevOf(days[d - 1]) : null, d < 6 ? prevOf(days[d + 1]) : null, usedIn(days), rand), day, target);
   });
-  return { ...week, target, days };
+  return { ...week, target, v: PLAN_VERSION, days };
 }
 
 // Days `from`..6 that use a dish no longer on offer for that meal (hidden, or limited to the other
@@ -472,7 +590,7 @@ export function replaceHidden(week, from) {
         for (const cand of DISHES[m.slot]) {
           if (strict && avoid.has(cand.id)) continue;
           const meals = days[d].meals.map((x, j) => (j === i ? { slot: x.slot, dish: cand.id, portion: 1 } : x));
-          const day = refitDay({ meals }, week.target);
+          const day = refitDay({ ...days[d], meals }, week.target);
           const t = dayTotals(day);
           const cost = Math.abs(t.kcal - week.target.kcal) / week.target.kcal * 100 + Math.abs(t.protein - week.target.protein) / 5;
           if (!best || cost < best.cost) best = { cost, day };

@@ -68,7 +68,26 @@ export function dayHtml(day, d, target) {
   const t = meals.dayTotals(day);
   const ok = meals.withinTarget(t, target);
   const custom = day.meals.some((m) => m.custom);
+  // Protein top-up: shown when planned, otherwise a button to add it (with a hint on a low day).
+  const topup = meals.topupDish();
+  const extra = meals.extraInfo(day);
+  const low = t.protein < target.protein - meals.PROTEIN_TOLERANCE;
+  const why = extra?.manual ? "Tillagd av dig." : "Tillagd så att måltiderna håller normal storlek och ändå når proteinmålet.";
+  // What adding it would do, worked out for real: it never pushes protein past the target, the meals shrink instead.
+  const preview = !extra && meals.canAddExtra(day) ? meals.dayTotals(meals.withExtra(day, target)) : null;
+  const effect = !preview ? ""
+    : low ? `<p class="note warn">Proteinet ligger lågt, ${t.protein} av ${target.protein} g. Med ${esc(topup.name.toLowerCase())} blir det ${preview.protein} g.</p>`
+    : `<p class="note">Med ${esc(topup.name.toLowerCase())} blir måltiderna mindre. Proteinet ligger kvar runt målet (${preview.protein} g).</p>`;
+  const extraHtml = extra
+    ? `<div class="shake-row"><span class="meal-slot">Proteinpåfyllning</span><span class="meal-name">${esc(extra.name)}</span>
+        <span class="meal-kcal">${extra.kcal} kcal · ${extra.protein} g protein</span></div>
+      <div class="shake-add"><p class="note">${extra.ingredients.map((i) => esc(`${amount(i)} ${i.name.toLowerCase()}`)).join(" · ")}. ${why} Mängden anpassas efter dagen.</p>
+      <button class="btn-secondary" type="button" data-act="extra-off" data-day="${d}">Ta bort påfyllning</button></div>`
+    : !preview ? ""
+    : `<div class="shake-add">${effect}
+      <button class="btn-secondary" type="button" data-act="extra-on" data-day="${d}">Lägg till ${esc(topup.name.toLowerCase())}</button></div>`;
   return `<div class="meals">${day.meals.map((m) => mealHtml(m, d, day)).join("")}</div>
+    ${extraHtml}
     <p class="note day-total">Summa ${t.kcal} av ${target.kcal} kcal · ${t.protein} av ${target.protein} g protein</p>
     ${!ok && custom ? `<p class="note warn">Resten av dagen räcker inte för att nå målet med rimliga portioner. Det gör inget, en enstaka dag jämnar ut sig.</p>` : ""}`;
 }
@@ -105,6 +124,9 @@ export function bindMeals(el, { start, target, rerender, failed }) {
     const day = btn.dataset.day ?? form?.dataset.day, slot = btn.dataset.slot ?? form?.dataset.slot;
     if (act === "custom-open") { customFor = `${day}:${slot}`; rerender(); el.querySelector("#c-name")?.focus(); }
     else if (act === "custom-cancel") { customFor = null; rerender(); el.querySelector(`[data-act="custom-open"][data-day="${day}"][data-slot="${slot}"]`)?.focus(); }
+    else if (act === "extra-on" || act === "extra-off") {
+      save(meals.setExtra(week(), +day, act === "extra-on"), `[data-act="${act === "extra-on" ? "extra-off" : "extra-on"}"][data-day="${day}"]`);
+    }
     else if (act === "custom-undo") save(meals.setCustom(week(), +day, slot, null), `#pick-${day}-${slot}`);
   });
 

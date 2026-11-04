@@ -1,5 +1,6 @@
 // The user's changes to the dish catalog: stored edits, own dishes and which dishes are shown.
-// Storage shape: { items: { [id]: { slot, name, kcal, protein, fat, carbs, ingredients, meals? } }, visible: { [id]: boolean } }.
+// Storage shape: { items: { [id]: { slot, name, kcal, protein, fat, carbs, ingredients, meals? } }, visible: { [id]: boolean },
+//   topup?: id }.
 import { get, setMany } from "./store.js";
 import * as meals from "./meals.js";
 
@@ -48,6 +49,13 @@ export const canHide = (id) => {
   const d = meals.dishOf(id);
   return !!d && meals.isVisible(id) && d.meals.every((slot) => meals.DISHES[slot].length > meals.minDishes(slot));
 };
+
+// The snack used as protein top-up (a protein-rich one); every planned day is re-fitted with it.
+export function setTopup(id) {
+  if (!meals.isTopupCandidate(meals.dishOf(id))) return false;
+  const cur = get("dishes") ?? {};
+  return commit({ ...cur, topup: id }, new Set([id]));
+}
 
 export function setVisible(id, show, replace) {
   if (!show && !canHide(id)) return false;

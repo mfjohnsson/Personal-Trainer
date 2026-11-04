@@ -17,7 +17,7 @@ const nf = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 1 });
 export function listOf(week, from) {
   const items = new Map();
   for (const day of week.days.slice(from)) {
-    for (const m of day.meals) {
+    for (const m of meals.dayItems(day)) {
       if (m.custom) continue;
       for (const i of meals.mealInfo(m).ingredients) {
         const key = `${i.name.toLowerCase()}|${i.unit}`;

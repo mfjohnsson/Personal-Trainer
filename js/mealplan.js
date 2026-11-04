@@ -33,13 +33,14 @@ export function lastSnackBefore(start) {
   return meals.isWeek(prev) ? prev.days.at(-1).meals[2].dish : null;
 }
 
-// The stored week is reused while every dish still resolves. A new target (weigh-in or profile) keeps
-// the dishes and re-fits the portions; a new week is built from the dishes on offer.
+// The stored week is reused while every dish still resolves. A new target (weigh-in or profile), or a
+// week stored by an older planner, keeps the dishes and re-fits the portions; a new week is built from
+// the dishes on offer.
 export function weekMeals(start, target) {
   const all = allWeeks();
   const cur = all[start];
   const resolvable = meals.isWeek(cur) && cur.days.every((day) => day.meals.every((m) => m.custom || meals.dishOf(m.dish)));
-  if (resolvable && cur.target.kcal === target.kcal && cur.target.protein === target.protein) return cur;
+  if (resolvable && cur.v === meals.PLAN_VERSION && cur.target.kcal === target.kcal && cur.target.protein === target.protein) return cur;
   let week;
   if (resolvable) week = meals.retarget(cur, target);
   else {

@@ -88,7 +88,7 @@ export const match = (name) => foodByNumber(PREFERRED[norm(name)]) ?? search(nam
 // Typical weights of what the recipes count in pieces, slices and decilitres. Estimates, shown as such.
 const PIECE_G = [[/ägg/i, 60], [/tomat/i, 120], [/banan/i, 120], [/frukt|äpple|päron|apelsin/i, 150]];
 const SLICE_G = [[/bröd/i, 30]];
-const DL_G = [[/mjölk|yoghurt|\bfil\b|kvarg/i, 103]];
+const DL_G = [[/proteinpulver/i, 35], [/mjölk|yoghurt|\bfil\b|kvarg/i, 103]]; // 1 dl vassleprotein väger ca 35 g
 const firstMatch = (table, name, fallback) => table.find(([re]) => re.test(name))?.[1] ?? fallback;
 
 export function gramsOf(amount, unit, name) {

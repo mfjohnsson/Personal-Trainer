@@ -6,7 +6,7 @@ import * as calc from "../js/calc.js";
 const mart = calc.calorieTarget({ age: 35, heightCm: 170, weightKg: 82.5 });
 const targets = [1700, 1900, 2100, Math.round(mart), 2400].map((kcal) => ({ kcal, protein: calc.PROTEIN_G }));
 const starts = ["2026-01-05", "2026-01-12", "2026-01-19", "2026-01-26", "2026-02-02"];
-let worstK = 0, worstP = 0, failed = 0;
+let worstK = 0, worstP = 0, failed = 0, biggest = 0;
 
 for (const target of targets) {
   let prevSnack = null;
@@ -28,6 +28,8 @@ for (const target of targets) {
         assert.notEqual(day.meals[1].dish, week.days[d - 1].meals[1].dish, "lunch not repeated");
         assert.notEqual(day.meals[3].dish, week.days[d - 1].meals[3].dish, "dinner not repeated");
       }
+      if (day.extra) assert.ok(day.extra.dish === meals.topupId() && day.extra.portion >= 0.5 && day.extra.portion <= 3, "top-up shape");
+      biggest = Math.max(biggest, ...day.meals.map((m) => m.portion));
       for (const m of day.meals) {
         const info = meals.mealInfo(m);
         assert.ok(m.portion > 0 && info.kcal > 0, "no negative or empty portions");
@@ -39,8 +41,9 @@ for (const target of targets) {
     prevSnack = last;
   }
 }
-console.log(`mart target ${Math.round(mart)} kcal; worst kcal error ${(worstK * 100).toFixed(1)} %, worst protein error ${worstP} g, days out of tolerance: ${failed}`);
+console.log(`mart target ${Math.round(mart)} kcal; worst kcal error ${(worstK * 100).toFixed(1)} %, worst protein error ${worstP} g, days out of tolerance: ${failed}, biggest portion ${biggest.toFixed(2)}`);
 assert.equal(failed, 0);
+assert.ok(biggest <= 1.35, `meals stay near a normal portion (biggest ${biggest})`);
 
 // Same inputs give the same week; another week differs.
 const a = meals.generateWeek("2026-01-05", targets[3]), b = meals.generateWeek("2026-01-05", targets[3]), c = meals.generateWeek("2026-01-12", targets[3]);
@@ -108,6 +111,99 @@ const keepAte = meals.regenerateFrom(ate, 2, 5);
 assert.deepEqual(keepAte.days[3], ate.days[3], "the day with something else eaten is kept");
 assert.notDeepEqual(keepAte.days.slice(4), ate.days.slice(4));
 assert.notEqual(meals.regenerateFrom(a, 0, 2, a.days[0].meals[2].dish).days[0].meals[2].dish, a.days[0].meals[2].dish, "Monday respects last week's snack");
+
+// Protein top-up: added by itself when a meal would otherwise get too big, sized in half portions,
+// removable and addable per day, kept through swaps, new targets and new suggestions.
+{
+  const T = a.target;
+  const halves = (p) => p >= 0.5 && p <= 3 && p % 0.5 === 0;
+  const mealKcal = (d) => d.meals.reduce((s, m) => s + meals.mealInfo(m).kcal, 0);
+  const auto = a.days.filter((d) => d.extra);
+  assert.ok(auto.length > 0, "some days get a top-up");
+  assert.ok(auto.every((d) => d.extra.dish === meals.topupId() && halves(d.extra.portion) && !d.extra.manual), "auto top-ups");
+
+  // Removed by you: stays removed.
+  const di = a.days.findIndex((d) => d.extra);
+  const off = meals.setExtra(a, di, false);
+  assert.equal(off.days[di].extra, undefined);
+  assert.equal(off.days[di].extraOff, true);
+  assert.ok(meals.isWeek(off));
+  assert.deepEqual(off.days.filter((_, i) => i !== di), a.days.filter((_, i) => i !== di), "other days untouched");
+  const otherLunch = (d) => meals.DISHES.lunch.find((o) => o.id !== d.meals[1].dish && o.id !== d.meals[3].dish).id;
+  assert.equal(meals.changeDish(off, di, "lunch", otherLunch(off.days[di])).days[di].extra, undefined, "removed stays removed after a swap");
+  assert.equal(meals.retarget(off, { ...T, kcal: T.kcal + 150 }).days[di].extra, undefined, "removed stays removed after a new target");
+  assert.equal(meals.regenerateFrom(off, 0, 2).days[di].extraOff, true, "removed stays removed after a new suggestion");
+
+  // Added by you: always kept, the meals shrink to make room, on target.
+  const ni = a.days.findIndex((d) => !d.extra);
+  assert.ok(ni >= 0);
+  const on = meals.setExtra(a, ni, true);
+  const day = on.days[ni];
+  assert.ok(day.extra.manual && halves(day.extra.portion));
+  assert.ok(meals.withinTarget(meals.dayTotals(day), T), "day with a top-up stays on target");
+  assert.ok(mealKcal(day) < mealKcal(a.days[ni]), "meals shrink to make room");
+  assert.ok(meals.changeDish(on, ni, "lunch", otherLunch(day)).days[ni].extra.manual, "kept through a swap");
+  assert.ok(meals.setCustom(on, ni, "lunch", { name: "x", kcal: 600, protein: 30 }).days[ni].extra.manual, "kept through ate-something-else");
+  assert.ok(meals.regenerateFrom(on, 0, 2).days[ni].extra.manual, "kept through a new suggestion");
+  for (const dk of [-300, -100, 150, 400]) assert.ok(meals.retarget(on, { ...T, kcal: T.kcal + dk }).days[ni].extra.manual, `kept through retarget ${dk}`);
+  assert.equal(meals.dayItems(day).length, 5);
+  assert.deepEqual(meals.dayItems(off.days[di]), off.days[di].meals, "no top-up, no extra item");
+
+  // It follows the protein target: a low-protein breakfast gives a bigger top-up.
+  const lowDay = meals.setExtra(meals.setCustom(a, ni, "frukost", { name: "bulle", kcal: 500, protein: 5 }), ni, true).days[ni];
+  assert.ok(lowDay.extra.portion > day.extra.portion, `bigger top-up on a low-protein day (${lowDay.extra.portion} vs ${day.extra.portion})`);
+
+  // The older stored form `shake` reads as a manual shake and is rewritten on the next fit.
+  assert.equal(meals.dayItems({ ...a.days[ni], shake: true }).at(-1).portion, 1);
+  const legacy = meals.setCustom({ ...a, days: a.days.map((d, i) => (i === ni ? { ...d, shake: 1.5 } : d)) }, ni, "lunch", null).days[ni];
+  assert.equal(legacy.shake, undefined);
+  assert.ok(legacy.extra.manual && legacy.extra.dish === meals.SHAKE_ID);
+
+  // Another snack as top-up; only snacks qualify. Editing the top-up dish re-fits the days.
+  // Only protein-rich snacks qualify: cottage cheese with fruit and nuts barely moves the day's protein.
+  assert.ok(meals.isTopupCandidate(meals.dishOf(meals.SHAKE_ID)));
+  assert.ok(!meals.isTopupCandidate(meals.dishOf("snack-keso")) && !meals.isTopupCandidate(meals.dishOf("snack-yoghurt")));
+  meals.applyDishes({ topup: "snack-keso" });
+  assert.equal(meals.topupId(), meals.SHAKE_ID, "a weak snack falls back to the shake");
+  meals.applyDishes({ topup: "lunch-lax" });
+  assert.equal(meals.topupId(), meals.SHAKE_ID, "a main dish is not a top-up");
+  const kvarg = { slot: "mellanmal", name: "Kvarg", kcal: 180, protein: 30, fat: 1, carbs: 12, ingredients: [["Kvarg", 300, "g", "Mejeri och ägg"]] };
+  meals.applyDishes({ items: { "egen-kvarg": kvarg }, visible: { "egen-kvarg": false }, topup: "egen-kvarg" });
+  assert.equal(meals.topupId(), "egen-kvarg", "an own protein-rich snack, also hidden from the rotation");
+  const other = meals.refitWeek(a, new Set(["egen-kvarg"]));
+  assert.ok(other.days.some((d) => d.extra) && other.days.filter((d) => d.extra).every((d) => d.extra.dish === "egen-kvarg"), "auto top-ups switch dish");
+  assert.ok(other.days.every((d) => meals.withinTarget(meals.dayTotals(d), T)));
+  meals.applyDishes();
+
+  // Adding it to a day short of protein brings the day to the target; on a day already on target
+  // protein stays and the meals shrink. withExtra shows that before adding; setExtra gives the same day.
+  for (const ids of [["frukost", "middag-farssas", "snack-yoghurt", "middag-lax"], ["frukost", "lunch-makrill", "snack-yoghurt", "middag-torsk"]]) {
+    const week = { ...a, days: a.days.map((d) => ({ meals: ids.map((dish, i) => ({ slot: meals.SLOTS[i].id, dish, portion: 1 })), extraOff: true })) };
+    const short = meals.changeDish(week, 0, "lunch", ids[1]).days[0];
+    assert.ok(meals.dayTotals(short).protein < T.protein - meals.PROTEIN_TOLERANCE, `${ids} is short without a top-up`);
+    const added = meals.setExtra({ ...week, days: [short, ...week.days.slice(1)] }, 0, true).days[0];
+    assert.deepEqual(meals.withExtra(short, T), added);
+    assert.ok(meals.withinTarget(meals.dayTotals(added), T), `${ids} reaches the target with a top-up: ${JSON.stringify(meals.dayTotals(added))}`);
+  }
+  // Not a second shake on a day whose snack already is the shake.
+  const shakeWeek = meals.changeDish(a, ni, "mellanmal", meals.SHAKE_ID);
+  assert.ok(!meals.canAddExtra(shakeWeek.days[ni]) && meals.withExtra(shakeWeek.days[ni], T) === null);
+  assert.equal(meals.setExtra(shakeWeek, ni, true), null);
+  const full = a.days[ni];
+  const shrunk = meals.withExtra(full, T);
+  assert.ok(Math.abs(meals.dayTotals(shrunk).protein - meals.dayTotals(full).protein) <= meals.PROTEIN_TOLERANCE && mealKcal(shrunk) < mealKcal(full));
+  const shake = meals.dishOf(meals.SHAKE_ID);
+  meals.applyDishes({ items: { [meals.SHAKE_ID]: { ...shake, kcal: shake.kcal + 200 } } });
+  const edited = meals.refitWeek(on, new Set([meals.SHAKE_ID]));
+  assert.ok(meals.withinTarget(meals.dayTotals(edited.days[ni]), T), "editing the top-up dish re-fits its days");
+  meals.applyDishes();
+
+  assert.equal(meals.setExtra(a, 9, true), null);
+  for (const bad of [{ shake: "yes" }, { shake: 40 }, { extra: { dish: 1, portion: 1 } }, { extra: { dish: "x", portion: 0 } },
+    { extra: { dish: "snack-shake", portion: 40 } }, { extra: { dish: "snack-shake", portion: 0.7 } }, { extraOff: "ja" }]) {
+    assert.equal(meals.isWeek({ ...a, days: a.days.map((d) => ({ ...d, ...bad })) }), false, JSON.stringify(bad));
+  }
+}
 
 // Lunch and dinner can't be the same dish on the same day, also when picked by hand.
 assert.equal(meals.changeDish(a, 0, "middag", a.days[0].meals[1].dish), null);

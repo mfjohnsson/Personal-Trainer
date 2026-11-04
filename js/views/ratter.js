@@ -31,10 +31,26 @@ function rowHtml(d) {
   </div>`;
 }
 
+// Which snack fills up protein when the meals alone would get too big. Hidden snacks may be chosen too.
+// Only protein-rich snacks can be chosen: a less rich one barely moves the day's protein.
+function topupHtml() {
+  const choices = meals.allDishes("mellanmal").filter(meals.isTopupCandidate);
+  const pick = choices.length > 1
+    ? `<label for="topup-pick">Proteinpåfyllning</label>
+      <select class="pick" id="topup-pick">${choices.map((d) => `<option value="${esc(d.id)}"${d.id === meals.topupId() ? " selected" : ""}>${esc(d.name)} (${d.protein} g protein)</option>`).join("")}</select>`
+    : `<p class="pick-label">Proteinpåfyllning</p><p class="ex-name">${esc(meals.topupDish()?.name ?? "")}</p>`;
+  return `<div class="field topup">
+    ${pick}
+    <p class="note">Läggs till de dagar då måltiderna annars inte når proteinmålet, eller bara når det med portioner mer än ${Math.round((meals.NORMAL_MAX - 1) * 100)} % större än normalt. Måltiderna blir då mindre i stället.</p>
+    <p class="note">Bara mellanmål med minst ${meals.TOPUP_MIN_DENSITY} g protein per 100 kcal kan väljas, till exempel shake eller kvarg. Keso med frukt och nötter har för lite för att hjälpa. Lägg till ett eget mellanmål om du vill ha något annat.</p>
+  </div>`;
+}
+
 function listHtml(msg) {
   const sections = meals.GROUPS.map((g) => `
     <section class="card">
       <h2><span class="dot" style="background: var(--c-midja)"></span>${g.label}</h2>
+      ${g.id === "mellanmal" ? topupHtml() : ""}
       ${meals.allDishes(g.id).map(rowHtml).join("")}
       <button class="btn-secondary add-dish" type="button" data-act="add" data-group="${g.id}">Lägg till rätt</button>
     </section>`).join("");
@@ -205,6 +221,11 @@ export function mount(el) {
   };
   el.onchange = (e) => {
     const t = e.target;
+    if (t.id === "topup-pick") {
+      msg = dishes.setTopup(t.value) ? `Proteinpåfyllning: ${esc(meals.dishOf(t.value).name)}.` : SAVE_ERROR;
+      render("#topup-pick");
+      return;
+    }
     if (!editing) return;
     if (t.dataset.unit !== undefined) { editing.rows[+t.dataset.unit].unit = t.value; updateTotals(); }
     else if (t.name === "meals") editing.meals = t.value === "both" ? meals.MAIN : [t.value];
