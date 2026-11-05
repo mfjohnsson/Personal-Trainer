@@ -72,7 +72,7 @@ export const PREFERRED = {
   "fullkornspasta torr": 848, "fullkornsris torrt": 2478,
   "grönsaker": 6420, "ugnsgrönsaker": 2672, "wokgrönsaker": 425, "rotfrukter": 2672,
   "tomat": 364, "krossade tomater": 422, "ägg": 1225, "proteinbröd": 9000001, "proteinpulver": 9000002,
-  "mjölk": 123, "turkisk yoghurt": 6113, "jordnötssmör": 1559, "bär": 555, "keso": 70, "frukt": 588, "nötter": 3140,
+  "mjölk": 123, "vatten": 1953, "turkisk yoghurt": 6113, "jordnötssmör": 1559, "bär": 555, "keso": 70, "frukt": 588, "nötter": 3140,
   "potatis": 4457, "broccoli": 325, "zucchini": 362, "sötpotatis": 3765, "sallad": 340, "morötter": 289, "spenat": 4941,
   "kidneybönor kokta": 878, "vita bönor kokta": 880,
   // Short names people type; the data spells these differently ("Nöt färs") or lists dishes first.
@@ -129,7 +129,8 @@ export const match = (name) => foodByNumber(PREFERRED[norm(name)]) ?? search(nam
 // Typical weights of what the recipes count in pieces, slices and decilitres. Estimates, shown as such.
 const PIECE_G = [[/ägg/i, 60], [/tomat/i, 120], [/banan/i, 120], [/frukt|äpple|päron|apelsin/i, 150]];
 const SLICE_G = [[/bröd/i, 30]];
-const DL_G = [[/proteinpulver/i, 35], [/mjölk|yoghurt|\bfil\b|kvarg/i, 103]]; // 1 dl vassleprotein väger ca 35 g
+// 1 dl vassleprotein väger ca 35 g, 1 dl mjöl ca 60 g, 1 dl havregryn ca 40 g; anything else is counted as water (100 g).
+const DL_G = [[/proteinpulver/i, 35], [/mjölk|yoghurt|\bfil\b|kvarg/i, 103], [/mjöl|rågsikt/i, 60], [/gryn|müsli/i, 40]];
 const firstMatch = (table, name, fallback) => table.find(([re]) => re.test(name))?.[1] ?? fallback;
 
 export function gramsOf(amount, unit, name) {

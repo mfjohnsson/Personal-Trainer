@@ -20,6 +20,7 @@ export function listOf(week, from) {
     for (const m of meals.dayItems(day)) {
       if (m.custom) continue;
       for (const i of meals.mealInfo(m).ingredients) {
+        if (/^vatten$/i.test(i.name)) continue; // nothing to buy
         const key = `${i.name.toLowerCase()}|${i.unit}`;
         const cur = items.get(key) ?? { key, name: i.name, unit: i.unit, category: i.category, amount: 0 };
         cur.amount += i.amount;

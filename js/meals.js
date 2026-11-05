@@ -11,6 +11,10 @@ export const SLOTS = [
 const KOTT = "Kött och fisk", MEJERI = "Mejeri och ägg", BROD = "Bröd och spannmål", GRONT = "Frukt och grönt", SKAFFERI = "Skafferi";
 const g = (name, amount, cat) => [name, amount, "g", cat];
 const dish = (id, name, kcal, protein, fat, carbs, ingredients) => ({ id, name, kcal, protein, fat, carbs, ingredients });
+// A dish that can also be made with water instead of milk: same protein powder, fewer calories. Used when
+// the protein top-up is added to a day that is tight on calories (see fitPlan). Numbers from
+// Livsmedelsverket's database, checked by tools/foods-test.mjs.
+const withWater = (d, kcal, protein, fat, carbs, ingredients) => ({ ...d, water: { kcal, protein, fat, carbs, ingredients } });
 
 // A dish that is built in but not offered until the user turns it on (turkey: expensive, hard to find).
 const off = (d) => ({ ...d, hidden: true });
@@ -45,8 +49,9 @@ const BASE = {
       g("Fläskfilé", 200, KOTT), g("Fullkornsris, tillagat", 150, BROD), g("Grönsaker", 100, GRONT)]),
   ],
   mellanmal: [
-    dish("snack-shake", "Proteinshake", 291, 37, 10, 14, [
+    withWater(dish("snack-shake", "Proteinshake", 291, 37, 10, 14, [
       ["Proteinpulver", 1, "dl", SKAFFERI], ["Mjölk", 2.5, "dl", MEJERI]]),
+    137, 27, 2, 2, [["Proteinpulver", 1, "dl", SKAFFERI], ["Vatten", 2.5, "dl", SKAFFERI]]),
     dish("snack-yoghurt", "Turkisk yoghurt, jordnötssmör och bär", 407, 13, 29, 22, [
       g("Turkisk yoghurt", 250, MEJERI), g("Jordnötssmör", 15, SKAFFERI), g("Bär", 80, GRONT)]),
     dish("snack-keso", "Keso, frukt och nötter", 461, 32, 26, 22, [
@@ -318,7 +323,7 @@ function bestDay(target, prev, next, used, rand, pool = DISHES) {
   }
   best.dishes.forEach((x) => { used[x.id] = (used[x.id] ?? 0) + 1; });
   return {
-    ...(best.extra ? { extra: { dish: ex.id, portion: best.extra } } : {}),
+    ...(best.extra ? { extra: { dish: ex.id, portion: best.extra, ...(best.water ? { water: true } : {}) } } : {}),
     meals: best.dishes.map((x, i) => ({ slot: SLOTS[i].id, dish: x.id, portion: best.scales[i] })),
   };
 }
@@ -402,10 +407,13 @@ export function mealInfo(meal) {
     const c = meal.custom;
     return { name: c.name || "Något annat", kcal: Math.round(c.kcal), protein: Math.round(c.protein), fat: 0, carbs: 0, ingredients: [], custom: true };
   }
-  const d = dishOf(meal.dish);
+  const base = dishOf(meal.dish);
+  const water = !!(meal.water && base.water); // made with water instead of milk
+  const d = water ? { ...base, ...base.water, name: `${base.name} på vatten` } : base;
   const q = meal.portion * (meal.ate ?? 1);
   return {
     name: d.name,
+    ...(water ? { water: true } : {}),
     kcal: Math.round(d.kcal * q),
     protein: Math.round(d.protein * q),
     fat: Math.round(d.fat * q),
@@ -431,6 +439,7 @@ const BIG_COST = 20; // weight of the part of a portion beyond NORMAL_MAX (see f
 const EXTRA_BOUNDS = [0.5, 3];
 const EXTRA_STEP = 0.5;
 const EXTRA_COST = 0.02; // a small price, so the top-up is only used when it clearly helps
+const WATER_COST = 0.05; // and the water version only when it clearly helps more than milk
 
 export const topupDish = () => dishOf(topup);
 
@@ -442,7 +451,7 @@ function extraOf(day) {
 }
 const extraMeal = (day) => {
   const e = extraOf(day);
-  return e && dishOf(e.dish) ? { slot: "mellanmal", dish: e.dish, portion: e.portion } : null;
+  return e && dishOf(e.dish) ? { slot: "mellanmal", dish: e.dish, portion: e.portion, ...(e.water ? { water: true } : {}) } : null;
 };
 
 // The meals of a day as eaten, the top-up last. For totals and the shopping list.
@@ -470,10 +479,16 @@ function fitPlan(items, target, bounds, mode, ex) {
   const short = plain.totals.protein < target.protein - PROTEIN_TOLERANCE;
   // When the snack already is the top-up dish, the snack itself grows instead of a second one.
   if (mode === "auto" && (!(big || short) || items.includes(ex))) return plain;
+  // The top-up as it is, and made with water when the dish has that version: the same protein for far
+  // fewer calories, so it wins on a day that is tight on calories, and milk on a day with room.
+  const variants = [{ dish: ex, water: false }, ...(ex.water ? [{ dish: ex.water, water: true }] : [])];
   let withExtra = null;
-  for (let extra = EXTRA_BOUNDS[0]; extra <= EXTRA_BOUNDS[1]; extra += EXTRA_STEP) {
-    const fit = fitDay(items, target, bounds, { kcal: ex.kcal * extra, protein: ex.protein * extra });
-    if (!withExtra || fit.cost < withExtra.cost) withExtra = { ...fit, extra };
+  for (const v of variants) {
+    for (let extra = EXTRA_BOUNDS[0]; extra <= EXTRA_BOUNDS[1]; extra += EXTRA_STEP) {
+      const fit = fitDay(items, target, bounds, { kcal: v.dish.kcal * extra, protein: v.dish.protein * extra });
+      const cost = fit.cost + (v.water ? WATER_COST : 0);
+      if (!withExtra || cost < withExtra.cost) withExtra = { ...fit, cost, extra, water: v.water };
+    }
   }
   withExtra.cost += EXTRA_COST;
   return mode === "on" || withExtra.cost < plain.cost ? withExtra : plain;
@@ -488,19 +503,26 @@ function refitDay(day, weekTarget) {
   const lastLogged = day.meals.reduce((a, m, i) => (isLogged(m) ? i : a), -1);
   const items = day.meals.map(itemOf);
   const eaten = (m) => (m.custom ? 1 : m.portion * (m.ate ?? 1));
-  const bounds = day.meals.map((m, i) => (i <= lastLogged ? [eaten(m), eaten(m)] : BOUNDS[m.slot]));
+  // Meals not yet eaten never grow beyond a normal portion (or the size already planned) to make up for
+  // what was left uneaten: halve breakfast and lunch and the dinner would otherwise balloon to 1.6 portions.
+  // The day then ends under the target, which is what actually happened.
+  const bounds = day.meals.map((m, i) => {
+    if (i <= lastLogged) return [eaten(m), eaten(m)];
+    const [lo, hi] = BOUNDS[m.slot];
+    return lastLogged < 0 ? [lo, hi] : [lo, Math.min(hi, Math.max(NORMAL_MAX, m.portion))];
+  });
   const old = extraOf(day);
   const mode = day.extraOff ? "off" : old?.manual ? "on" : "auto";
   const ex = mode === "on" ? dishOf(old.dish) : topupDish();
   // When the last meal is logged the day is over: the top-up is neither added nor resized afterwards.
   const { shake: _s, extra: _e, ...plain } = day;
   if (mode === "auto" && lastLogged === day.meals.length - 1) {
-    return { ...plain, ...(old && dishOf(old.dish) ? { extra: { dish: old.dish, portion: old.portion } } : {}), meals: day.meals };
+    return { ...plain, ...(old && dishOf(old.dish) ? { extra: { dish: old.dish, portion: old.portion, ...(old.water ? { water: true } : {}) } } : {}), meals: day.meals };
   }
   const fit = fitPlan(items, target, bounds, mode, ex);
   return {
     ...plain,
-    ...(fit.extra ? { extra: { dish: ex.id, portion: fit.extra, ...(mode === "on" ? { manual: true } : {}) } } : {}),
+    ...(fit.extra ? { extra: { dish: ex.id, portion: fit.extra, ...(fit.water ? { water: true } : {}), ...(mode === "on" ? { manual: true } : {}) } } : {}),
     meals: day.meals.map((m, i) => (isLogged(m) ? m : { slot: m.slot, dish: m.dish, portion: fit.scales[i] })),
   };
 }
@@ -579,7 +601,8 @@ export function setAte(week, dayIdx, slot, share) {
   const meals = day.meals.map((m, i) => {
     if (i !== slotIdx) return m;
     const { ate: _old, ...plain } = m;
-    return share === null ? plain : { ...plain, ate: share };
+    // Undone: the meal is planned again from a normal portion, not from whatever size it had grown to.
+    return share === null ? { ...plain, portion: 1 } : { ...plain, ate: share };
   });
   return { ...week, days: week.days.map((x, i) => (i === dayIdx ? refitDay({ ...day, meals }, week.target) : x)) };
 }
@@ -674,7 +697,8 @@ const validMeal = (m) => isObject(m) && typeof m.dish === "string" && finite(m.p
   && (m.ate === undefined || validShare(m.ate));
 const extraPortion = (p) => finite(p) && p >= EXTRA_BOUNDS[0] && p <= EXTRA_BOUNDS[1] && p % EXTRA_STEP === 0;
 const validExtra = (d) => (d.shake === undefined || d.shake === true || extraPortion(d.shake))
-  && (d.extra === undefined || (isObject(d.extra) && typeof d.extra.dish === "string" && extraPortion(d.extra.portion)))
+  && (d.extra === undefined || (isObject(d.extra) && typeof d.extra.dish === "string" && extraPortion(d.extra.portion)
+    && (d.extra.water === undefined || typeof d.extra.water === "boolean")))
   && (d.extraOff === undefined || typeof d.extraOff === "boolean");
 export const isWeek = (w) => isObject(w) && isObject(w.target) && Array.isArray(w.days) && w.days.length === 7
   && w.days.every((d) => isObject(d) && validExtra(d) && Array.isArray(d.meals) && d.meals.length === SLOTS.length && d.meals.every(validMeal));

@@ -164,7 +164,8 @@ function mealHtml(m, d, day) {
 // The protein top-up as a row like the meals: open it to see what it is and remove it.
 function extraHtml(extra, d) {
   const key = `${d}:extra`;
-  const why = extra.manual ? "Tillagd av dig." : "Tillagd så att måltiderna håller normal storlek och ändå når proteinmålet.";
+  const why = (extra.manual ? "Tillagd av dig." : "Tillagd så att måltiderna håller normal storlek och ändå når proteinmålet.")
+    + (extra.water ? " Gjord på vatten i stället för mjölk så att dagen håller sig nära kalorimålet." : "");
   return `<details class="meal" data-meal="${key}"${openMeals.has(key) ? " open" : ""}>
     <summary><span class="meal-slot">Proteinpåfyllning</span><span class="meal-name">${esc(extra.name)}</span>
       <span class="meal-kcal">${extra.kcal} kcal · ${extra.protein} g protein</span></summary>
@@ -229,8 +230,14 @@ export function dayHtml(day, d, target, prev = null) {
     ? `<p class="note warn">Proteinet ligger lågt. Med ${esc(shake.name.toLowerCase())} blir det ${preview.protein} g.</p>
       <button class="btn-secondary" type="button" data-act="extra-on" data-day="${d}">Lägg till ${esc(shake.name.toLowerCase())}</button>`
     : "";
+  // Say what is off: under or over in calories, short of protein. Eating less than planned is not a fault;
+  // the meals left are kept at a normal size instead of being stuffed to make up for it.
+  const dk = t.kcal - goal.kcal, dp = t.protein - goal.protein;
+  const parts = [];
+  if (Math.abs(dk) > goal.kcal * meals.KCAL_TOLERANCE) parts.push(`${nf.format(Math.abs(dk))} kcal ${dk < 0 ? "under" : "över"} målet`);
+  if (Math.abs(dp) > meals.PROTEIN_TOLERANCE) parts.push(`${nf.format(Math.abs(dp))} g ${dp < 0 ? "under" : "över"} proteinmålet`);
   const missHtml = ok || !(day.meals.some(meals.isLogged) || meals.adjustOf(day)) ? ""
-    : `<p class="note warn">Dagen når inte riktigt målet med rimliga portioner. ${meals.adjustOf(day) ? "Prova en mindre justering, eller låt det vara." : "Det gör inget, en enstaka dag jämnar ut sig."}</p>`;
+    : `<p class="note warn">Dagen ligger ${parts.join(" och ")}. ${dk < 0 ? "Resten av dagen är på normal storlek i stället för att fyllas på för att ta igen det. " : ""}${meals.adjustOf(day) ? "Prova en mindre justering, eller låt det vara." : "Det gör inget, en enstaka dag jämnar ut sig."}</p>`;
   return `<div class="meals">${day.meals.map((m) => mealHtml(m, d, day)).join("")}${extra ? extraHtml(extra, d) : ""}</div>
     <p class="note day-total">Summa ${t.kcal} av ${goal.kcal} kcal · ${t.protein} av ${goal.protein} g protein</p>
     ${missHtml}${lowHtml}

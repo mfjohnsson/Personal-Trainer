@@ -189,6 +189,50 @@ const reAdj = meals.retarget(meals.setAdjust(a, 5, -500), { kcal: a.target.kcal 
 assert.equal(reAdj.days[5].adjust, -500);
 assert.ok(meals.withinTarget(meals.dayTotals(reAdj.days[5]), meals.dayTarget(reAdj.days[5], reAdj.target)));
 
+// The shake is made with water on a day that is tight on calories, with milk on a day with room.
+{
+  const tight = meals.setCustom(a, 1, "frukost", { name: "Stor frukost", kcal: 1100, protein: 15 });
+  const ex = tight.days[1].extra;
+  assert.ok(ex && ex.water === true, "tight day: the shake is made with water");
+  assert.ok(meals.isWeek(tight));
+  const info = meals.extraInfo(tight.days[1]);
+  assert.ok(info.water && /på vatten/.test(info.name), info.name);
+  assert.ok(info.ingredients.some((i) => i.name === "Vatten") && !info.ingredients.some((i) => i.name === "Mjölk"));
+  const water = meals.baseDish("snack-shake").water;
+  assert.equal(info.kcal, Math.round(water.kcal * ex.portion), "counted with the water numbers");
+  // Same protein per portion would take far more calories with milk.
+  assert.ok(water.kcal < meals.baseDish("snack-shake").kcal * 0.6);
+  const roomy = meals.setCustom(a, 1, "frukost", { name: "Liten frukost", kcal: 150, protein: 5 });
+  assert.ok(roomy.days[1].extra && !roomy.days[1].extra.water, "day with room: milk");
+  // Kept by a new suggestion on the following days, and by re-fitting.
+  assert.equal(meals.regenerateFrom(tight, 3, 4).days[1].extra.water, true);
+  const re = meals.retarget(tight, { kcal: tight.target.kcal - 100, protein: tight.target.protein });
+  assert.ok(re.days[1].extra, "re-fitted day keeps a top-up");
+  // A damaged flag is rejected rather than trusted.
+  assert.ok(!meals.isWeek({ ...tight, days: tight.days.map((d, i) => (i === 1 ? { ...d, extra: { ...d.extra, water: "ja" } } : d)) }));
+  // An edited shake loses the water version (its ingredients are no longer the ones the numbers are for).
+  meals.applyDishes({ items: { "snack-shake": { slot: "mellanmal", name: "Proteinshake", kcal: 300, protein: 40, fat: 10, carbs: 14, ingredients: [["Proteinpulver", 1, "dl", "Skafferi"]] } } });
+  assert.equal(meals.dishOf("snack-shake").water, undefined);
+  meals.applyDishes({});
+  assert.ok(meals.dishOf("snack-shake").water);
+}
+
+// Eating less is not made up for: halved breakfast and lunch must not push the later meals past a normal portion.
+for (let d = 0; d < 7; d++) {
+  const planned = a.days[d].meals.map((m) => m.portion);
+  let w = meals.setAte(a, d, "frukost", 0.5);
+  w = meals.setAte(w, d, "lunch", 0.5);
+  w.days[d].meals.forEach((m, i) => {
+    if (i > 1) assert.ok(m.portion <= Math.max(meals.NORMAL_MAX, planned[i]) + 1e-9, `day ${d} meal ${i} grew to ${m.portion}`);
+  });
+  // Not stuffed past the target either; low protein is made up by the shake top-up, not by bigger meals.
+  assert.ok(meals.dayTotals(w.days[d]).kcal <= a.target.kcal * (1 + meals.KCAL_TOLERANCE), `day ${d} over target`);
+  // Undoing puts the meal back to a normal portion.
+  const undone = meals.setAte(w, d, "lunch", null);
+  assert.equal(undone.days[d].meals[1].ate, undefined);
+  assert.ok(undone.days[d].meals[1].portion <= meals.NORMAL_MAX + 1e-9);
+}
+
 // A new suggestion for the rest of the week keeps the earlier days.
 const again = meals.regenerateFrom(ate, 4, 1);
 assert.deepEqual(again.days.slice(0, 4), ate.days.slice(0, 4));

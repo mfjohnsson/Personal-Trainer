@@ -12,6 +12,23 @@ assert.equal(new Set(json.foods.map((f) => f[0])).size, json.foods.length, "uniq
 assert.ok(/CC BY 4\.0/.test(json.source), "license credit kept in the file");
 foods.setData(json);
 
+// The water version of the shake (used when the day is tight on calories) matches the database.
+{
+  const shake = meals.baseDish("snack-shake");
+  const m = foods.macrosOf(shake.water.ingredients);
+  assert.deepEqual(m.unmatched, []);
+  for (const [k, v] of [["kcal", shake.water.kcal], ["protein", shake.water.protein], ["fat", shake.water.fat], ["carbs", shake.water.carbs]]) {
+    assert.equal(m[k], v, `shake on water ${k}: update withWater(...) in meals.js to ${m[k]}`);
+  }
+  assert.ok(shake.water.kcal < shake.kcal && shake.water.protein * 100 / shake.water.kcal > shake.protein * 100 / shake.kcal, "water: fewer kcal, more protein per kcal");
+}
+
+// A decilitre of flour is about 60 g, not 100 g; milk and water-like things are unchanged.
+assert.equal(foods.gramsOf(1, "dl", "Mjölblandning rågsikt").grams, 60);
+assert.equal(foods.gramsOf(2, "dl", "Havregryn").grams, 80);
+assert.equal(foods.gramsOf(1, "dl", "Mjölk").grams, 103);
+assert.equal(foods.gramsOf(1, "dl", "Vatten").grams, 100);
+
 // Every preferred food exists, and every built-in ingredient gets a match.
 for (const [name, nr] of Object.entries(foods.PREFERRED)) assert.ok(foods.foodByNumber(nr), `${name} -> ${nr}`);
 for (const { id } of meals.SLOTS) {
