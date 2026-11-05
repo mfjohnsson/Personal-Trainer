@@ -30,6 +30,14 @@ export function mount(el) {
     </details>`;
   }
 
+  function dayFood() {
+    // Today's calories follow what you logged yesterday (unless you changed today yourself).
+    const autoOk = mealplan.autoAdjust(today, target);
+    if (!autoOk) requestAnimationFrame(() => root.querySelector(".storage-error")?.removeAttribute("hidden"));
+    const w = mealplan.weekMeals(start, target);
+    return mealui.dayHtml(w.days[todayIdx], todayIdx, target, mealplan.dayBefore(start, todayIdx, w));
+  }
+
   function render() {
     const { byDay, movedTo } = plan.schedule(week, todayIdx);
     const items = byDay[todayIdx];
@@ -39,7 +47,7 @@ export function mount(el) {
           <p class="empty">${movedTo[todayIdx] !== undefined ? "Dagens pass ligger senare i veckan." : "Ingen träning planerad idag."}</p></section>`;
     const food = target
       ? `<section class="card"><h2><span class="dot" style="background: var(--c-midja)"></span>Dagens mat</h2>
-          ${mealui.dayHtml(mealplan.weekMeals(start, target).days[todayIdx], todayIdx, target)}</section>`
+          ${dayFood()}</section>`
       : `<section class="card"><h2><span class="dot" style="background: var(--c-midja)"></span>Dagens mat</h2>
           <p class="empty">Fyll i din profil så räknar appen ut dina måltider.</p>
           <a class="btn-secondary" href="#/profil">Till profilen</a></section>`;

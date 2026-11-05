@@ -37,15 +37,19 @@ export function mount(el) {
   let confirming = false, msg = "";
 
   function render() {
+    // Today's calories follow what you logged yesterday (unless you changed today yourself).
+    const autoOk = mealplan.autoAdjust(today, target);
     const week = mealplan.weekMeals(start, target);
     const days = week.days.map((day, d) => {
       const tot = meals.dayTotals(day);
-      const ok = meals.withinTarget(tot, target);
+      const ok = meals.withinTarget(tot, meals.dayTarget(day, target));
+      const adj = meals.adjustOf(day);
       return `<details class="card day" data-day="${d}"${open.has(d) ? " open" : ""}>
         <summary><span class="day-name">${plan.DAYS[d]}${d === todayIdx ? ` <span class="today">idag</span>` : ""}</span>
           <span class="day-pass">${tot.kcal} kcal · ${tot.protein} g</span>
+          ${adj ? `<span class="badge">${adj > 0 ? "+" : "−"}${Math.abs(adj)} kcal</span>` : ""}
           ${ok ? "" : `<span class="badge warn">Avviker</span>`}</summary>
-        ${mealui.dayHtml(day, d, target)}
+        ${mealui.dayHtml(day, d, target, mealplan.dayBefore(start, d, week))}
       </details>`;
     }).join("");
     const from = fromDay(week);
@@ -70,7 +74,7 @@ export function mount(el) {
         </div>
         <div class="regen">${regen}</div>
         <p class="note" role="status" aria-live="polite">${msg}</p>
-        ${storageErrorHtml}
+        ${storageErrorHtml.replace(" hidden", autoOk ? " hidden" : "")}
       </section>${days}`;
   }
 

@@ -50,3 +50,29 @@ export function weekMeals(start, target) {
   saveWeek(week);
   return week;
 }
+
+// The day before day `idx` of the week starting `start`, with its week's target: { day, target }, or
+// null. Monday looks at last week's Sunday, when that week is stored.
+export function dayBefore(start, idx, week) {
+  if (idx > 0) return { day: week.days[idx - 1], target: week.target };
+  const prev = allWeeks()[prevWeekStart(start)];
+  return meals.isWeek(prev) ? { day: prev.days[6], target: prev.target } : null;
+}
+
+// Today's calories follow yesterday: what you ate over the target is taken off today (meals.carryOver).
+// Left alone when you changed today yourself or today's last meal is eaten. The views call it on every
+// render, so it follows when yesterday's log changes; it only saves when the value changes. Returns false
+// if storage refused.
+export function autoAdjust(todayIso, target) {
+  const start = weekStart(todayIso);
+  const idx = plan.dayIndex(start, todayIso);
+  if (idx < 0 || idx > 6) return true;
+  const week = weekMeals(start, target);
+  const day = week.days[idx];
+  if (meals.adjustByYou(day) || meals.dayOver(day)) return true;
+  const prev = dayBefore(start, idx, week);
+  const v = meals.carryOver(prev?.day, prev?.target, week.target);
+  if (v === meals.adjustOf(day)) return true;
+  const next = meals.setAdjust(week, idx, v, { auto: true });
+  return !next || saveWeek(next);
+}
