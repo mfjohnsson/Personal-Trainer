@@ -321,6 +321,8 @@ details.meal > summary::-webkit-details-marker { display: none; }
 .ing-row:first-child { border-top: none; }
 .ing-name { flex: 1 1 160px; min-width: 0; display: flex; flex-direction: column; }
 .ing-name .note { font-size: 0.78rem; }
+.abv { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 0.85rem; color: var(--ink-3); }
+.abv input { width: 56px; min-height: 36px; padding: 4px 8px; font: inherit; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
 .ing-amount { display: flex; gap: 6px; align-items: center; }
 .ing-amount input { width: 72px; min-height: 44px; padding: 8px; font: inherit; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
 .ing-amount select { min-height: 44px; padding: 8px; font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }

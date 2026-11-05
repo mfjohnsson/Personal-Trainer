@@ -362,13 +362,18 @@ export function regenerateFrom(week, from, salt = 1, prevSnack = null) {
   const days = week.days.slice(0, f);
   const used = usedIn(days);
   for (let d = f; d < 7; d++) {
-    const keep = week.days[d].meals.some((m) => m.custom);
+    const keep = week.days[d].meals.some(isLogged);
     const prev = d > 0 ? prevOf(days[d - 1]) : { lunch: null, mellanmal: prevSnack, middag: null };
-    const next = keep || d === 6 || !week.days[d + 1].meals.some((m) => m.custom) ? null : prevOf(week.days[d + 1]);
+    const next = keep || d === 6 || !week.days[d + 1].meals.some(isLogged) ? null : prevOf(week.days[d + 1]);
     days.push(keep ? week.days[d] : keepChoice(bestDay(week.target, prev, next, used, rand), week.days[d], week.target));
   }
   return { ...week, days };
 }
+
+// A meal you have said something about: ate something else (`custom`) or ate a share of the planned
+// portion (`ate`, 0 = nothing, 0.5 = half). Such a meal is eaten and is not re-planned.
+export const isLogged = (m) => !!m.custom || m.ate !== undefined;
+export const ATE_CHOICES = [[0, "Inget"], [0.25, "En fjärdedel"], [0.5, "Hälften"], [0.75, "Tre fjärdedelar"], [1.25, "En fjärdedel mer"], [1.5, "Hälften mer"]];
 
 // What a planned meal counts as: the dish, or what you ate instead ({ name, kcal, protein }).
 const itemOf = (m) => (m.custom ? { kcal: m.custom.kcal, protein: m.custom.protein } : dishOf(m.dish));
@@ -380,7 +385,7 @@ export function mealInfo(meal) {
     return { name: c.name || "Något annat", kcal: Math.round(c.kcal), protein: Math.round(c.protein), fat: 0, carbs: 0, ingredients: [], custom: true };
   }
   const d = dishOf(meal.dish);
-  const q = meal.portion;
+  const q = meal.portion * (meal.ate ?? 1);
   return {
     name: d.name,
     kcal: Math.round(d.kcal * q),
@@ -391,7 +396,7 @@ export function mealInfo(meal) {
       name, unit, category,
       amount: unit === "g" ? Math.round((amount * q) / 5) * 5
         : unit === "dl" ? Math.round(amount * q * 10) / 10
-          : Math.max(1, Math.round(amount * q)), // whole pieces: eggs and fruit
+          : Math.max(q > 0 ? 1 : 0, Math.round(amount * q)), // whole pieces: eggs and fruit
     })),
   };
 }
@@ -456,22 +461,28 @@ function fitPlan(items, target, bounds, mode, ex) {
   return mode === "on" || withExtra.cost < plain.cost ? withExtra : plain;
 }
 
-// Re-fits one day's portions to the target. Meals up to and including the last "ate something else"
-// are already eaten and stay as they are; only the meals after it are scaled. The top-up is decided
+// Re-fits one day's portions to the target. Meals up to and including the last logged one (ate
+// something else, or a share of the portion) are already eaten and stay as they are; only the meals
+// after it are scaled. The top-up is decided
 // again (unless you added or removed it yourself).
 function refitDay(day, target) {
-  const lastCustom = day.meals.reduce((a, m, i) => (m.custom ? i : a), -1);
+  const lastLogged = day.meals.reduce((a, m, i) => (isLogged(m) ? i : a), -1);
   const items = day.meals.map(itemOf);
-  const bounds = day.meals.map((m, i) => (i <= lastCustom ? [m.custom ? 1 : m.portion, m.custom ? 1 : m.portion] : BOUNDS[m.slot]));
+  const eaten = (m) => (m.custom ? 1 : m.portion * (m.ate ?? 1));
+  const bounds = day.meals.map((m, i) => (i <= lastLogged ? [eaten(m), eaten(m)] : BOUNDS[m.slot]));
   const old = extraOf(day);
   const mode = day.extraOff ? "off" : old?.manual ? "on" : "auto";
   const ex = mode === "on" ? dishOf(old.dish) : topupDish();
-  const fit = fitPlan(items, target, bounds, mode, ex);
+  // When the last meal is logged the day is over: the top-up is neither added nor resized afterwards.
   const { shake: _s, extra: _e, ...plain } = day;
+  if (mode === "auto" && lastLogged === day.meals.length - 1) {
+    return { ...plain, ...(old && dishOf(old.dish) ? { extra: { dish: old.dish, portion: old.portion } } : {}), meals: day.meals };
+  }
+  const fit = fitPlan(items, target, bounds, mode, ex);
   return {
     ...plain,
     ...(fit.extra ? { extra: { dish: ex.id, portion: fit.extra, ...(mode === "on" ? { manual: true } : {}) } } : {}),
-    meals: day.meals.map((m, i) => (m.custom ? m : { slot: m.slot, dish: m.dish, portion: fit.scales[i] })),
+    meals: day.meals.map((m, i) => (isLogged(m) ? m : { slot: m.slot, dish: m.dish, portion: fit.scales[i] })),
   };
 }
 
@@ -530,8 +541,24 @@ export function setCustom(week, dayIdx, slot, custom) {
   if (slotIdx < 0 || !day) return null;
   const meals = day.meals.map((m, i) => {
     if (i !== slotIdx) return m;
-    const { custom: _old, ...plain } = m;
+    const { custom: _old, ate: _ate, ...plain } = m;
     return custom ? { ...plain, portion: 1, custom } : { ...plain, portion: 1 };
+  });
+  return { ...week, days: week.days.map((x, i) => (i === dayIdx ? refitDay({ ...day, meals }, week.target) : x)) };
+}
+
+// "Ate less (or more)": the planned meal counts as `share` of its portion (see ATE_CHOICES) and the
+// meals after it are re-fitted. `share` null means it was eaten as planned again. Null for an unknown
+// day, slot or share, or a meal that is something else.
+export function setAte(week, dayIdx, slot, share) {
+  const slotIdx = SLOTS.findIndex((s) => s.id === slot);
+  const day = week.days[dayIdx];
+  if (slotIdx < 0 || !day || day.meals[slotIdx].custom) return null;
+  if (share !== null && !ATE_CHOICES.some(([v]) => v === share)) return null;
+  const meals = day.meals.map((m, i) => {
+    if (i !== slotIdx) return m;
+    const { ate: _old, ...plain } = m;
+    return share === null ? plain : { ...plain, ate: share };
   });
   return { ...week, days: week.days.map((x, i) => (i === dayIdx ? refitDay({ ...day, meals }, week.target) : x)) };
 }
@@ -548,7 +575,8 @@ export function validateCustom(raw) {
 
 // A stored week with the shape the views rely on (stored data can be damaged).
 const validMeal = (m) => isObject(m) && typeof m.dish === "string" && finite(m.portion)
-  && (m.custom === undefined || (isObject(m.custom) && finite(m.custom.kcal) && finite(m.custom.protein)));
+  && (m.custom === undefined || (isObject(m.custom) && finite(m.custom.kcal) && finite(m.custom.protein)))
+  && (m.ate === undefined || (finite(m.ate) && m.ate >= 0 && m.ate <= 2));
 const extraPortion = (p) => finite(p) && p >= EXTRA_BOUNDS[0] && p <= EXTRA_BOUNDS[1] && p % EXTRA_STEP === 0;
 const validExtra = (d) => (d.shake === undefined || d.shake === true || extraPortion(d.shake))
   && (d.extra === undefined || (isObject(d.extra) && typeof d.extra.dish === "string" && extraPortion(d.extra.portion)))
@@ -569,7 +597,7 @@ export function retarget(week, target) {
   const days = week.days.map((day) => (resolves(day) ? refitDay(day, target) : day));
   const rand = rng(seedOf(week.start, 3));
   days.forEach((day, d) => {
-    if (!resolves(day) || day.meals.some((m) => m.custom) || withinTarget(dayTotals(day), target)) return;
+    if (!resolves(day) || day.meals.some(isLogged) || withinTarget(dayTotals(day), target)) return;
     days[d] = keepChoice(bestDay(target, d > 0 ? prevOf(days[d - 1]) : null, d < 6 ? prevOf(days[d + 1]) : null, usedIn(days), rand), day, target);
   });
   return { ...week, target, v: PLAN_VERSION, days };
@@ -582,7 +610,7 @@ export function replaceHidden(week, from) {
   const days = [...week.days];
   for (let d = Math.max(0, from); d < 7; d++) {
     days[d].meals.forEach((m, i) => {
-      if (m.custom || (isVisible(m.dish) && fits(dishOf(m.dish), m.slot)) || !resolves(days[d])) return;
+      if (isLogged(m) || (isVisible(m.dish) && fits(dishOf(m.dish), m.slot)) || !resolves(days[d])) return;
       const avoid = new Set([days[d - 1]?.meals[i].dish, days[d + 1]?.meals[i].dish,
         ...(isMain(m.slot) ? days[d].meals.filter((x, j) => j !== i && isMain(x.slot)).map((x) => x.dish) : [])]);
       let best = null;

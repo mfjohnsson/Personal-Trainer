@@ -55,4 +55,22 @@ assert.equal(foods.isPreferred("Xyzzyq"), false);
 // "fil" means filmjölk, not fillet: 1 dl of a fillet is not 103 g.
 assert.equal(foods.gramsOf(1, "dl", "Laxfilé").grams, 100);
 assert.equal(foods.gramsOf(1, "dl", "Filmjölk").grams, 103);
+// Drinks: counted per cl, strength can be changed and only the alcohol part of the energy moves.
+const starkol = foods.foodByNumber(1906); // Öl starköl vol. % 5,4, 42 kcal/100 g
+assert.ok(foods.isDrink(starkol) && foods.isDrink(foods.match("ipa")) && foods.isDrink(foods.match("vin")));
+assert.ok(!foods.isDrink(foods.foodByNumber(585)), "vinbär is not a drink");
+assert.ok(foods.search("vinäger", 5).every((f) => !foods.isDrink(f)), "vinäger is not a drink");
+assert.equal(foods.abvOf(starkol), 5.4);
+assert.equal(foods.drinkSize(starkol), 33);
+assert.equal(foods.drinkSize(foods.match("rödvin")), 15);
+assert.equal(foods.itemMacros(starkol, 330).kcal, 42 * 3.3);
+assert.equal(Math.round(foods.itemMacros(starkol, 330, 5.4).kcal), Math.round(42 * 3.3), "own strength changes nothing");
+assert.ok(Math.abs(foods.itemMacros(starkol, 100, 7.4).kcal - (42 + 2 * 0.789 * 7)) < 1e-9, "2 % more alcohol, about 11 kcal more per 100 ml");
+assert.equal(foods.itemMacros(starkol, 100, 7.4).carbs, 3);
+assert.ok(/^Öl/.test(foods.search("öl")[0].name) && /IPA/.test(foods.search("ipa")[0].name));
+// Every estimated alcoholic drink: the stated kcal roughly matches alcohol + carbs + protein.
+for (const f of foods.search("uppskattning", 50).filter((x) => foods.abvOf(x) > 0)) {
+  const calc = foods.abvOf(f) * 0.789 * 7 + (f.carbs + f.protein) * 4;
+  assert.ok(Math.abs(calc - f.kcal) <= 3, `${f.name}: ${f.kcal} vs ${calc.toFixed(1)}`);
+}
 console.log(`ok: ${json.foods.length} foods, all built-in dishes match the database`);

@@ -99,6 +99,32 @@ assert.ok(meals.isWeek(ate));
 assert.deepEqual(meals.validateCustom({ kcal: "800", protein: "30,4" }).values, { name: "", kcal: 800, protein: 30 });
 assert.ok(meals.validateCustom({ kcal: "", protein: "1" }).errors.kcal);
 
+// "Ate less": a share of the planned snack. It is locked, the meals before it too; the dinner after it grows.
+const half = meals.setAte(a, 3, "mellanmal", 0.5);
+const hm = half.days[3].meals, am = a.days[3].meals;
+assert.equal(hm[2].ate, 0.5);
+assert.equal(hm[2].portion, am[2].portion, "the planned portion is kept, the share is on top");
+assert.equal(meals.mealInfo(hm[2]).kcal, Math.round(meals.dishOf(am[2].dish).kcal * am[2].portion * 0.5));
+assert.equal(hm[0].portion, am[0].portion);
+assert.equal(hm[1].portion, am[1].portion, "lunch is before the snack, already eaten");
+assert.ok(hm[3].portion > am[3].portion, "dinner makes up for the smaller snack");
+assert.ok(meals.isWeek(half));
+assert.equal(meals.setAte(a, 3, "mellanmal", 0.3), null, "only the listed shares");
+// After an off-plan dinner, the snack can still be corrected: the day just ends lower.
+const night = meals.setCustom(a, 3, "middag", { name: "Burgare", kcal: 1500, protein: 35 });
+const corrected = meals.setAte(night, 3, "mellanmal", 0.5);
+assert.equal(corrected.days[3].meals[3].custom.kcal, 1500, "dinner kept");
+assert.deepEqual(corrected.days[3].meals.map((m) => m.portion), night.days[3].meals.map((m) => m.portion), "everything is eaten, no portion moves");
+assert.deepEqual(corrected.days[3].extra, night.days[3].extra, "the day is over: no top-up added or resized afterwards");
+assert.equal(meals.dayTotals(corrected.days[3]).kcal, meals.dayTotals(night.days[3]).kcal - (meals.mealInfo(night.days[3].meals[2]).kcal - meals.mealInfo(corrected.days[3].meals[2]).kcal));
+const none = meals.setAte(night, 3, "mellanmal", 0);
+assert.equal(meals.mealInfo(none.days[3].meals[2]).kcal, 0);
+assert.ok(meals.mealInfo(none.days[3].meals[2]).ingredients.every((i) => i.amount === 0), "nothing eaten, no pieces either");
+assert.equal(meals.setAte(half, 3, "mellanmal", null).days[3].meals[2].ate, undefined, "back to as planned");
+assert.equal(meals.setAte(night, 3, "middag", 0.5), null, "something else can not be halved");
+assert.equal(meals.setCustom(half, 3, "mellanmal", { name: "", kcal: 100, protein: 5 }).days[3].meals[2].ate, undefined, "something else replaces a share");
+assert.ok(meals.regenerateFrom(half, 3, 7).days[3] === half.days[3], "a day with a share is not re-planned");
+
 // A new suggestion for the rest of the week keeps the earlier days.
 const again = meals.regenerateFrom(ate, 4, 1);
 assert.deepEqual(again.days.slice(0, 4), ate.days.slice(0, 4));

@@ -31,7 +31,7 @@ export function mount(el) {
   // Today is planned again unless you already entered something else eaten today.
   const fromDay = (week) => {
     const t = Math.min(Math.max(todayIdx, 0), 6);
-    return week.days[t].meals.some((m) => m.custom) ? t + 1 : t;
+    return week.days[t].meals.some(meals.isLogged) ? t + 1 : t;
   };
   const open = new Set([todayIdx]);
   let confirming = false, msg = "";

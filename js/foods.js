@@ -7,7 +7,42 @@ let loading = null;
 const EXTRA = [
   [9000001, "Proteinbröd (uppskattning)", 250, 22, 8, 16],
   [9000002, "Proteinpulver, vassle (uppskattning)", 390, 78, 6, 7],
+  // Drinks the database lacks. kcal = alcohol (vol. % × 0,789 g/ml × 7 kcal/g) + carbs and protein × 4.
+  [9000010, "Öl ljus lager vol. % 5 (uppskattning)", 43, 0.4, 0, 3.3],
+  [9000011, "Öl IPA APA vol. % 6,5 (uppskattning)", 56, 0.5, 0, 4.5],
+  [9000012, "Öl stout porter vol. % 5 (uppskattning)", 49, 0.4, 0, 5],
+  [9000013, "Öl veteöl vol. % 5 (uppskattning)", 46, 0.5, 0, 4],
+  [9000014, "Öl stark ale vol. % 8 (uppskattning)", 70, 0.5, 0, 6],
+  [9000015, "Rödvin vol. % 13,5 (uppskattning)", 85, 0.1, 0, 2.6],
+  [9000016, "Vitt vin torrt vol. % 12 (uppskattning)", 77, 0.1, 0, 2.6],
+  [9000017, "Rosévin vol. % 12 (uppskattning)", 82, 0.1, 0, 4],
+  [9000018, "Mousserande vin vol. % 11,5 (uppskattning)", 70, 0.2, 0, 1.5],
+  [9000019, "Cider vol. % 4,5 (uppskattning)", 61, 0, 0, 9],
 ];
+
+// Drinks are counted as glasses or bottles of a given size in cl. 1 ml is taken as 1 g.
+const DRINK = /^(öl|cider|läsk|juice|glögg|brännvin|whisky|rödvin|vitt vin|rosévin|mousserande|vin|sprit|likör|cognac|rom|gin|sportdryck|energidryck)(?![\p{L}])/iu;
+export const isDrink = (food) => DRINK.test(food.name);
+export const DRINK_SIZES = [4, 15, 25, 33, 40, 50, 75];
+export function drinkSize(food) {
+  if (/^(brännvin|whisky|sprit|likör|cognac|rom|gin)(?![\p{L}])/iu.test(food.name)) return 4;
+  if (/vin(?![\p{L}])|^glögg/iu.test(food.name)) return 15;
+  return 33;
+}
+
+// Alcohol by volume in the name ("vol. % 5,4"), 0 when none.
+export function abvOf(food) {
+  const m = /vol\. % ([\d,]+)/.exec(food.name);
+  return m ? Number(m[1].replace(",", ".")) : 0;
+}
+const ALCOHOL_KCAL = 0.789 * 7; // per vol. % and 100 ml
+
+// Macros of `grams` of `food`. `abv` (optional) replaces the drink's own strength: only the alcohol changes.
+export function itemMacros(food, grams, abv) {
+  const k = grams / 100;
+  const kcal = food.kcal + (abv === undefined ? 0 : (abv - abvOf(food)) * ALCOHOL_KCAL);
+  return { kcal: Math.max(0, kcal) * k, protein: food.protein * k, fat: food.fat * k, carbs: food.carbs * k };
+}
 
 export function setData(json) {
   const list = [...json.foods, ...EXTRA].map(([nummer, name, kcal, protein, fat, carbs]) => ({ nummer, name, kcal, protein, fat, carbs, key: name.toLowerCase() }));
@@ -44,7 +79,13 @@ export const PREFERRED = {
   "nötfärs": 951, "nötfärs 10%": 951, "lax": 1255, "torsk": 1246, "tonfisk": 1278, "makrill": 1260, "kalkon": 1162,
   "kyckling": 1173, "kycklingbröst": 1173, "kycklingbröstfilé": 1173, "räkor": 1395, "yoghurt": 124, "naturell yoghurt": 124,
   "quinoa": 3518, "ris": 2517, "fullkornsris": 2517, "pasta": 3828, "fullkornspasta": 3828, "havregryn": 702,
-  "olivolja": 35, "avokado": 320, "banan": 553, "äpple": 588, "gurka": 339, "morot": 289, "tomater": 364, "ägg kokt": 2205,
+  "olivolja": 35, "avokado": 320, "banan": 553,
+  // Things people eat out.
+  "hamburgare": 2511, "hamburgare med bröd": 2511, "pommes": 246, "pommes frites": 246, "coleslaw": 2075,
+  "öl": 9000010, "lager": 9000010, "folköl": 1902, "starköl": 1906, "lättöl": 1901, "ipa": 9000011, "apa": 9000011,
+  "stout": 9000012, "porter": 9000012, "veteöl": 9000013, "ale": 9000014, "vin": 9000015, "rödvin": 9000015,
+  "vitt vin": 9000016, "vitvin": 9000016, "rosé": 9000017, "rosévin": 9000017, "bubbel": 9000018, "cava": 9000018,
+  "prosecco": 9000018, "champagne": 9000018, "cider": 9000019, "äpple": 588, "gurka": 339, "morot": 289, "tomater": 364, "ägg kokt": 2205,
 };
 
 const tokens = (s) => s.toLowerCase().split(/[\s,.\-/()%]+/).filter(Boolean);
