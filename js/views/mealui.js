@@ -12,6 +12,7 @@ const labelOf = (slot) => meals.SLOTS.find((s) => s.id === slot).label;
 const openMeals = new Set(); // "day:slot" of opened meals, kept while the app runs
 let customFor = null; // "day:slot" whose "Åt något annat" form is open
 let adjustFor = null; // day whose "Justera dagen" panel is open
+const editOpen = new Set(); // "day:slot" whose "Ändra mängd eller rätt" section is open
 const pct = (share) => `${Math.round(share * 100)} %`;
 const signed = (v) => (v > 0 ? `+${nf.format(v)}` : v < 0 ? `−${nf.format(-v)}` : "0");
 
@@ -134,6 +135,20 @@ function mealHtml(m, d, day) {
     const attrs = `data-day="${d}" data-slot="${m.slot}"`;
     const ateBtn = (share, text, cls, more = "") => `<button class="${cls}" type="button" data-act="ate" data-share="${share}" ${attrs}${more}>${text}</button>`;
     const otherBtn = `<button class="btn-secondary" type="button" data-act="custom-open" ${attrs}>Åt något annat</button>`;
+    // Amount: set by the app, changeable by you in steps of 10 % of the recipe's portion. Set by you, it stays
+    // and the other meals not yet eaten fit around it; "Auto" hands it back.
+    const p = m.portion;
+    const down = Math.round((Math.ceil(p * 10 - 1e-9) / 10 - 0.1) * 100) / 100;
+    const up = Math.round((Math.floor(p * 10 + 1e-9) / 10 + 0.1) * 100) / 100;
+    const portionBtn = (v, text, cls, more = "") => `<button class="${cls}" type="button" data-act="portion" data-portion="${v}" ${attrs}${more}>${text}</button>`;
+    const amountRow = m.ate !== undefined || customFor === key ? ""
+      : `<div class="ate-row"><span class="pick-label">Mängd</span>
+          ${portionBtn(down, "−", "icon-btn", ` aria-label="Mindre mängd"${down < meals.PORTION_MIN - 1e-9 ? " disabled" : ""}`)}
+          <span class="ate-val" aria-live="polite">${pct(p)}</span>
+          ${portionBtn(up, "+", "icon-btn", ` aria-label="Större mängd"${up > meals.PORTION_MAX + 1e-9 ? " disabled" : ""}`)}
+</div>
+        ${m.manual ? `<p class="note">Du har satt mängden. Resten av dagen anpassas efter den.</p>
+          ${portionBtn("", "Låt appen sätta mängden", "link-btn")}` : ""}`;
     const eaten = customFor === key ? customForm(d, m.slot)
       : m.ate === undefined ? `<div class="btn-row">${ateBtn(1, "✓ Ätit", "btn-primary")}${ateBtn(0, "✕ Åt inte", "btn-secondary")}</div>${otherBtn}`
       : m.ate === 0 ? `<div class="btn-row">${ateBtn("", "Ångra", "btn-secondary")}${otherBtn}</div>`
@@ -143,15 +158,21 @@ function mealHtml(m, d, day) {
           ${ateBtn(m.ate + meals.ATE_STEP, "+", "icon-btn", ` aria-label="Mer"${m.ate >= meals.ATE_MAX ? " disabled" : ""}`)}
           ${ateBtn("", "Ångra", "btn-secondary")}</div>
         ${otherBtn}`;
+    // Amount and dish are behind one button, so an open meal shows what to eat and what you did.
+    const canEdit = m.ate === undefined && customFor !== key;
+    const editing = canEdit && editOpen.has(key);
+    const editHtml = !canEdit ? ""
+      : `<button class="link-btn" type="button" data-act="edit-toggle" ${attrs} aria-expanded="${editing}">${editing ? "Stäng ändra" : "Ändra mängd eller rätt"}</button>
+        ${editing ? `<div class="edit-box">${amountRow}${picker}<p class="note macros">Fett ${info.fat} g · Kolhydrater ${info.carbs} g</p></div>` : ""}`;
     body = `${m.ate === 0 ? `<p class="note">Du åt inte det här. Resten av dagen räknas om.</p>`
-        : `<p class="note">${info.ingredients.map((i) => esc(`${amount(i)} ${i.name.toLowerCase()}`)).join(" · ")}</p>
-      <p class="note macros">Fett ${info.fat} g · Kolhydrater ${info.carbs} g</p>`}
+        : `<p class="note">${info.ingredients.map((i) => esc(`${amount(i)} ${i.name.toLowerCase()}`)).join(" · ")}</p>`}
       ${eaten}
-      ${picker}`;
+      ${editHtml}`;
   }
   const badge = info.custom ? ` <span class="badge">Eget</span>`
     : m.ate === 1 ? ` <span class="badge ok">✓</span>`
     : m.ate === 0 ? ` <span class="badge">Åt inte</span>`
+    : m.manual ? ` <span class="badge">Egen mängd</span>`
     : m.ate !== undefined ? ` <span class="badge">${pct(m.ate)}</span>` : "";
   return `<details class="meal${m.ate === 0 ? " skipped" : ""}" data-meal="${key}"${openMeals.has(key) || customFor === key ? " open" : ""}>
     <summary><span class="meal-slot">${label}</span>
@@ -176,26 +197,25 @@ function extraHtml(extra, d) {
 }
 
 // "Justera dagen": more or fewer calories than the target for this day (protein stays), and the top-up.
-function adjustHtml(day, d, target, prev, lowShown) {
+function adjustHtml(day, d, target, bal, lowShown) {
   const adj = meals.adjustOf(day);
   // When the day's last meal is eaten nothing is re-fitted any more, so there is nothing to adjust.
   if (meals.dayOver(day)) return "";
   if (adjustFor !== d) {
-    return `<button class="btn-secondary wide" type="button" data-act="adjust-open" data-day="${d}">Justera dagen${adj ? ` (${signed(adj)} kcal${day.adjustAuto ? ", efter gårdagen" : ""})` : ""}</button>`;
+    return `<button class="btn-secondary wide" type="button" data-act="adjust-open" data-day="${d}">Justera dagen${adj ? ` (${signed(adj)} kcal${day.adjustAuto && bal?.days.includes(d) ? ", veckan" : ""})` : ""}</button>`;
   }
   const off = (v) => (meals.canAdjust(target, v) ? "" : " disabled");
   const btn = (v, text, key, more = "") => `<button class="${key.startsWith("v") ? "" : "icon-btn"}" type="button" data-act="adjust" data-day="${d}" data-kcal="${v}" data-key="${key}"${more}${off(v)}>${text}</button>`;
   const step = 100;
-  // Yesterday's result, when you logged what you ate. The app follows it by itself (today only) until you
-  // change the day yourself; then a button turns that back on.
-  const over = meals.overBy(prev?.day, prev?.target);
-  const take = meals.carryOver(prev?.day, prev?.target, target);
-  const rest = take < 0 && -take < over - meals.ADJUST_STEP ? " En dag räcker inte för allt, ta resten en annan dag." : "";
+  // The week evens out by itself (mealplan.autoAdjust) until you change the day yourself.
   let follow = "";
-  if (day.adjustAuto) follow = `<p class="note">Satt automatiskt: dagen innan blev det ${nf.format(over)} kcal över målet.${rest} Ändra om du vill.</p>`;
-  else if (take < 0) {
-    follow = `<p class="note">Dagen innan blev det ${nf.format(over)} kcal över målet.${rest}</p>
-      <button class="btn-secondary" type="button" data-act="adjust-auto" data-day="${d}" data-kcal="${take}">Följ gårdagen (${signed(take)} kcal)</button>`;
+  const open = !!bal?.days.includes(d) || meals.adjustByYou(day);
+  if (!open) follow = "";
+  else if (day.adjustAuto && bal?.over) {
+    follow = `<p class="note">Satt automatiskt: veckan ligger ${nf.format(bal.over)} kcal över, fördelat på ${bal.days.length} ${bal.days.length === 1 ? "dag" : "dagar"}. Ändra om du vill.</p>`;
+  } else if (meals.adjustByYou(day)) {
+    follow = `<p class="note">Du har satt dagen själv${bal?.over ? `. Veckan ligger ${nf.format(bal.over)} kcal över` : ""}.</p>
+      <button class="btn-secondary" type="button" data-act="adjust-auto" data-day="${d}" data-kcal="0">Låt appen jämna ut veckan</button>`;
   }
   const shake = meals.topupDish();
   const addShake = !lowShown && !meals.extraInfo(day) && meals.canAddExtra(day)
@@ -215,9 +235,8 @@ function adjustHtml(day, d, target, prev, lowShown) {
   </div>`;
 }
 
-// One day's meals. `prev` (optional, { day, target }) is the day before, for "you ate more than the
-// target yesterday" (mealplan.dayBefore).
-export function dayHtml(day, d, target, prev = null) {
+// One day's meals. `bal` (optional) is the week's balance (mealplan.balance), for "the week is over".
+export function dayHtml(day, d, target, bal = null) {
   const goal = meals.dayTarget(day, target);
   const t = meals.dayTotals(day);
   const ok = meals.withinTarget(t, goal);
@@ -236,12 +255,12 @@ export function dayHtml(day, d, target, prev = null) {
   const parts = [];
   if (Math.abs(dk) > goal.kcal * meals.KCAL_TOLERANCE) parts.push(`${nf.format(Math.abs(dk))} kcal ${dk < 0 ? "under" : "över"} målet`);
   if (Math.abs(dp) > meals.PROTEIN_TOLERANCE) parts.push(`${nf.format(Math.abs(dp))} g ${dp < 0 ? "under" : "över"} proteinmålet`);
-  const missHtml = ok || !(day.meals.some(meals.isLogged) || meals.adjustOf(day)) ? ""
+  const missHtml = ok || !(day.meals.some((m) => meals.isLogged(m) || m.manual) || meals.adjustOf(day)) ? ""
     : `<p class="note warn">Dagen ligger ${parts.join(" och ")}. ${dk < 0 ? "Resten av dagen är på normal storlek i stället för att fyllas på för att ta igen det. " : ""}${meals.adjustOf(day) ? "Prova en mindre justering, eller låt det vara." : "Det gör inget, en enstaka dag jämnar ut sig."}</p>`;
   return `<div class="meals">${day.meals.map((m) => mealHtml(m, d, day)).join("")}${extra ? extraHtml(extra, d) : ""}</div>
     <p class="note day-total">Summa ${t.kcal} av ${goal.kcal} kcal · ${t.protein} av ${goal.protein} g protein</p>
     ${missHtml}${lowHtml}
-    <div class="adjust">${adjustHtml(day, d, target, prev, !!lowHtml)}</div>`;
+    <div class="adjust">${adjustHtml(day, d, target, bal, !!lowHtml)}</div>`;
 }
 
 // Wires the meal rows inside `el` for the week starting `start`. `rerender()` draws the view again.
@@ -381,6 +400,21 @@ export function bindMeals(el, { start, target, rerender, failed }) {
     }
     else if (act === "adjust-open") { adjustFor = +day; rerender(); el.querySelector(`[data-act="adjust"][data-day="${day}"]:not(:disabled)`)?.focus(); }
     else if (act === "adjust-close") { adjustFor = null; rerender(); el.querySelector(`[data-act="adjust-open"][data-day="${day}"]`)?.focus(); }
+    else if (act === "edit-toggle") {
+      const k = `${day}:${slot}`;
+      if (editOpen.has(k)) editOpen.delete(k); else editOpen.add(k);
+      openMeals.add(k);
+      rerender();
+      el.querySelector(`[data-act="edit-toggle"][data-day="${day}"][data-slot="${slot}"]`)?.focus();
+    }
+    else if (act === "portion") {
+      const portion = btn.dataset.portion === "" ? null : Number(btn.dataset.portion);
+      openMeals.add(`${day}:${slot}`);
+      const same = btn.getAttribute("aria-label");
+      const sel = `[data-act="portion"][data-day="${day}"][data-slot="${slot}"]`;
+      save(meals.setPortion(week(), +day, slot, portion), same ? `${sel}[aria-label="${same}"]:not(:disabled)` : sel);
+      if (!el.contains(document.activeElement)) el.querySelector(`${sel}:not(:disabled)`)?.focus();
+    }
     else if (act === "adjust-auto") {
       save(meals.setAdjust(week(), +day, Number(btn.dataset.kcal), { auto: true }), `[data-act="adjust-close"][data-day="${day}"]`);
     }

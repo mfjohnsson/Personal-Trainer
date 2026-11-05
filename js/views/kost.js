@@ -6,6 +6,8 @@ import * as mealui from "./mealui.js";
 
 export const title = "Kost";
 
+const nf = new Intl.NumberFormat("sv-SE");
+
 let salt = 0; // bumped per "Nytt förslag" so each press gives another suggestion
 
 export function mount(el) {
@@ -37,9 +39,10 @@ export function mount(el) {
   let confirming = false, msg = "";
 
   function render() {
-    // Today's calories follow what you logged yesterday (unless you changed today yourself).
+    // The week evens out: what was eaten over the target is spread over the days left.
     const autoOk = mealplan.autoAdjust(today, target);
     const week = mealplan.weekMeals(start, target);
+    const bal = meals.balanceOf(week, todayIdx);
     const days = week.days.map((day, d) => {
       const tot = meals.dayTotals(day);
       const ok = meals.withinTarget(tot, meals.dayTarget(day, target));
@@ -49,7 +52,7 @@ export function mount(el) {
           <span class="day-pass">${tot.kcal} kcal · ${tot.protein} g</span>
           ${adj ? `<span class="badge">${adj > 0 ? "+" : "−"}${Math.abs(adj)} kcal</span>` : ""}
           ${ok ? "" : `<span class="badge warn">Avviker</span>`}</summary>
-        ${mealui.dayHtml(day, d, target, mealplan.dayBefore(start, d, week))}
+        ${mealui.dayHtml(day, d, target, bal)}
       </details>`;
     }).join("");
     const from = fromDay(week);
@@ -67,7 +70,8 @@ export function mount(el) {
           <div class="tile"><div class="label">Kalorimål</div><div class="value">${target.kcal}<span class="unit"> kcal</span></div></div>
           <div class="tile"><div class="label">Protein</div><div class="value">${target.protein}<span class="unit"> g</span></div></div>
         </div>
-        <p class="note">Portionerna anpassas så att varje dag når målet. Tryck på en måltid för att byta den.</p>
+        <p class="note">${bal?.take || bal?.unpaid ? `Veckan ligger ${nf.format(bal.over)} kcal över. ${bal.take ? `Resten av veckan dras ner ${nf.format(-bal.take)} kcal per dag, proteinet ligger kvar.` : ""}${bal.unpaid ? ` ${nf.format(bal.unpaid)} kcal hinns inte ta igen den här veckan.` : ""}`
+          : "Veckans kalorier jämnas ut: äter du mer en dag dras det av på resten av veckan. Tryck på en måltid för att markera den, ändra mängd eller byta."}</p>
         <div class="btn-row">
           <a class="btn-secondary" href="#/handla">Inköpslista</a>
           <a class="btn-secondary" href="#/ratter">Rätter</a>

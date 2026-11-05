@@ -367,7 +367,7 @@ export function regenerateFrom(week, from, salt = 1, prevSnack = null) {
   const days = week.days.slice(0, f);
   const used = usedIn(days);
   for (let d = f; d < 7; d++) {
-    const keep = week.days[d].meals.some(isLogged);
+    const keep = week.days[d].meals.some((m) => isLogged(m) || m.manual);
     const prev = d > 0 ? prevOf(days[d - 1]) : { lunch: null, mellanmal: prevSnack, middag: null };
     const next = keep || d === 6 || !week.days[d + 1].meals.some(isLogged) ? null : prevOf(week.days[d + 1]);
     days.push(keep ? week.days[d] : keepChoice(bestDay(dayTarget(week.days[d], week.target), prev, next, used, rand), week.days[d], week.target));
@@ -399,7 +399,9 @@ export const dayTarget = (day, target) => ({ kcal: Math.max(Math.min(MIN_DAY_KCA
 export const dayOver = (day) => isLogged(day.meals.at(-1));
 
 // What a planned meal counts as: the dish, or what you ate instead ({ name, kcal, protein }).
-const itemOf = (m) => (m.custom ? { kcal: m.custom.kcal, protein: m.custom.protein } : dishOf(m.dish));
+// A planned meal may be made with water (`water`, the shake) when its dish has that version.
+const variantOf = (m) => { const d = dishOf(m.dish); return m.water && d?.water ? { ...d, ...d.water } : d; };
+const itemOf = (m) => (m.custom ? { kcal: m.custom.kcal, protein: m.custom.protein } : variantOf(m));
 
 // Scaled numbers for one planned meal: kcal, protein and ingredient amounts.
 export function mealInfo(meal) {
@@ -478,7 +480,7 @@ function fitPlan(items, target, bounds, mode, ex) {
   const big = plain.scales.some((v, i) => bounds[i][0] !== bounds[i][1] && v > NORMAL_MAX + 1e-9);
   const short = plain.totals.protein < target.protein - PROTEIN_TOLERANCE;
   // When the snack already is the top-up dish, the snack itself grows instead of a second one.
-  if (mode === "auto" && (!(big || short) || items.includes(ex))) return plain;
+  if (mode === "auto" && (!(big || short) || items.some((i) => i?.id === ex.id))) return plain;
   // The top-up as it is, and made with water when the dish has that version: the same protein for far
   // fewer calories, so it wins on a day that is tight on calories, and milk on a day with room.
   const variants = [{ dish: ex, water: false }, ...(ex.water ? [{ dish: ex.water, water: true }] : [])];
@@ -508,6 +510,7 @@ function refitDay(day, weekTarget) {
   // The day then ends under the target, which is what actually happened.
   const bounds = day.meals.map((m, i) => {
     if (i <= lastLogged) return [eaten(m), eaten(m)];
+    if (m.manual) return [m.portion, m.portion]; // you set the amount; the rest of the day fits around it
     const [lo, hi] = BOUNDS[m.slot];
     return lastLogged < 0 ? [lo, hi] : [lo, Math.min(hi, Math.max(NORMAL_MAX, m.portion))];
   });
@@ -523,7 +526,9 @@ function refitDay(day, weekTarget) {
   return {
     ...plain,
     ...(fit.extra ? { extra: { dish: ex.id, portion: fit.extra, ...(fit.water ? { water: true } : {}), ...(mode === "on" ? { manual: true } : {}) } } : {}),
-    meals: day.meals.map((m, i) => (isLogged(m) ? m : { slot: m.slot, dish: m.dish, portion: fit.scales[i] })),
+    meals: day.meals.map((m, i) => (isLogged(m) ? m : {
+      slot: m.slot, dish: m.dish, portion: fit.scales[i], ...(m.water ? { water: true } : {}), ...(m.manual ? { manual: true } : {}),
+    })),
   };
 }
 
@@ -584,7 +589,7 @@ export function setCustom(week, dayIdx, slot, custom) {
   if (slotIdx < 0 || !day) return null;
   const meals = day.meals.map((m, i) => {
     if (i !== slotIdx) return m;
-    const { custom: _old, ate: _ate, ...plain } = m;
+    const { custom: _old, ate: _ate, manual: _m, ...plain } = m;
     return custom ? { ...plain, portion: 1, custom } : { ...plain, portion: 1 };
   });
   return { ...week, days: week.days.map((x, i) => (i === dayIdx ? refitDay({ ...day, meals }, week.target) : x)) };
@@ -600,7 +605,7 @@ export function setAte(week, dayIdx, slot, share) {
   if (share !== null && !validShare(share)) return null;
   const meals = day.meals.map((m, i) => {
     if (i !== slotIdx) return m;
-    const { ate: _old, ...plain } = m;
+    const { ate: _old, manual: _m, ...plain } = m;
     // Undone: the meal is planned again from a normal portion, not from whatever size it had grown to.
     return share === null ? { ...plain, portion: 1 } : { ...plain, ate: share };
   });
@@ -624,7 +629,10 @@ function repickRest(week, dayIdx, day) {
   const used = usedIn(week.days.filter((_, i) => i !== dayIdx));
   const rand = rng(seedOf(week.start, 11 + dayIdx));
   const goal = dayTarget(day, week.target);
-  const pools = day.meals.map((m, i) => (i <= last ? [m] : DISHES[m.slot].map((x) => ({ slot: m.slot, dish: x.id, portion: 1 }))));
+  // Each dish on offer, and the shake also made with water (same protein, far fewer calories). A meal
+  // whose amount you set yourself keeps its dish.
+  const options = (slot) => DISHES[slot].flatMap((x) => [{ slot, dish: x.id, portion: 1 }, ...(x.water ? [{ slot, dish: x.id, portion: 1, water: true }] : [])]);
+  const pools = day.meals.map((m, i) => (i <= last || m.manual ? [m] : options(m.slot)));
   let best = null;
   const walk = (i, chosen) => {
     if (i < pools.length) { for (const m of pools[i]) walk(i + 1, [...chosen, m]); return; }
@@ -646,7 +654,7 @@ function repickRest(week, dayIdx, day) {
 
 // Returns a copy of the week where day `dayIdx` gets `kcal` more (or, negative, fewer) calories than
 // the target; protein stays. Eaten meals stay; when the planned dishes can't reach the new target, the
-// meals not yet eaten get other dishes. `auto` = set by the app from the day before (see carryOver);
+// meals not yet eaten get other dishes. `auto` = set by the app to even out the week (see balanceOf);
 // set by you otherwise, also 0, so the app leaves the day alone. Auto 0 removes the change. Null for an
 // unknown day or a value the target doesn't allow.
 export function setAdjust(week, dayIdx, kcal, { auto = false } = {}) {
@@ -667,19 +675,55 @@ export function setAdjust(week, dayIdx, kcal, { auto = false } = {}) {
   return { ...week, days: week.days.map((x, i) => (i === dayIdx ? next : x)) };
 }
 
-// The calorie change the app suggests after `prev` (the day before, with its week's target): the
-// calories eaten over its target are taken off, at most a quarter of `target` (further down the protein
-// target can't be reached with food). Only what you logged counts; a day under target adds nothing.
-export function carryOver(prev, prevTarget, target) {
-  if (!prev || !prevTarget || !prev.meals.some(isLogged)) return 0;
-  const over = dayTotals(prev).kcal - dayTarget(prev, prevTarget).kcal;
-  if (over < 100) return 0;
-  const most = Math.floor((target.kcal * 0.25) / ADJUST_STEP) * ADJUST_STEP;
-  let take = -Math.min(most, Math.round(over / ADJUST_STEP) * ADJUST_STEP);
-  while (take < 0 && !canAdjust(target, take)) take += ADJUST_STEP;
-  return take;
+// The week's calorie budget is the daily target times seven. What was eaten over it on the days already
+// done (before `todayIdx`, or with the last meal eaten) is taken off the days left, spread evenly: one big
+// day is paid back a little each day instead of all at once. A day under the target counts against a day
+// over it (it is one budget for the week), but no day is ever given more than its target. Days you changed
+// yourself keep your number and count towards it. At most a quarter of the target per day and never below
+// MIN_DAY_KCAL; what that keeps from being paid back is `unpaid`. Meals not marked count as planned.
+// Returns { over, take, days, unpaid }: kcal still to pay back, the change for each of `days` (the days
+// the app sets), and what can't be paid back this week.
+export function balanceOf(week, todayIdx) {
+  const done = (d) => d < todayIdx || dayOver(week.days[d]);
+  // A day with nothing logged and no amount of your own was eaten as planned: its own change (paid back),
+  // not the small rounding of the plan.
+  const counted = (day) => day.meals.some((m) => isLogged(m) || m.manual);
+  const overOn = (day) => (counted(day) ? dayTotals(day).kcal - week.target.kcal : adjustOf(day));
+  const doneOver = week.days.reduce((a, day, d) => (done(d) ? a + overOn(day) : a), 0);
+  const open = week.days.map((_, d) => d).filter((d) => d >= todayIdx && !done(d));
+  const days = open.filter((d) => !adjustByYou(week.days[d]));
+  const byYou = open.reduce((a, d) => (adjustByYou(week.days[d]) ? a + adjustOf(week.days[d]) : a), 0);
+  const sum = doneOver + byYou;
+  const left = sum >= 100 ? sum : 0;
+  const most = Math.floor((week.target.kcal * 0.25) / ADJUST_STEP) * ADJUST_STEP;
+  const wanted = days.length ? Math.round(left / days.length / ADJUST_STEP) * ADJUST_STEP : 0;
+  let take = -Math.min(most, wanted);
+  while (take < 0 && !canAdjust(week.target, take)) take += ADJUST_STEP;
+  take = take || 0; // not -0
+  // Only the cap or the floor leaves something unpaid; rounding to 50 kcal a day does not.
+  const limited = !days.length || -take < wanted;
+  const unpaid = limited ? Math.max(0, left + take * days.length) : 0;
+  return { over: Math.max(0, Math.round(left)), take, days, unpaid: unpaid >= ADJUST_STEP ? Math.round(unpaid) : 0 };
 }
-export const overBy = (prev, prevTarget) => (prev && prevTarget && prev.meals.some(isLogged) ? dayTotals(prev).kcal - dayTarget(prev, prevTarget).kcal : 0);
+
+// The amount of a planned meal set by you, as a share of the dish's own portion (1 = as in the recipe).
+// The meal keeps it and the other meals not yet eaten are fitted around it. `portion` null hands the
+// amount back to the app. Null for an unknown day or slot, an eaten or off-plan meal, or an amount
+// outside PORTION_MIN..PORTION_MAX.
+export const PORTION_MIN = 0.2;
+export const PORTION_MAX = 3;
+export function setPortion(week, dayIdx, slot, portion) {
+  const slotIdx = SLOTS.findIndex((s) => s.id === slot);
+  const day = week.days[dayIdx];
+  if (slotIdx < 0 || !day || isLogged(day.meals[slotIdx])) return null;
+  if (portion !== null && !(finite(portion) && portion >= PORTION_MIN - 1e-9 && portion <= PORTION_MAX + 1e-9)) return null;
+  const meals = day.meals.map((m, i) => {
+    if (i !== slotIdx) return m;
+    const { manual: _m, ...plain } = m;
+    return portion === null ? plain : { ...plain, portion: Math.round(portion * 100) / 100, manual: true };
+  });
+  return { ...week, days: week.days.map((x, i) => (i === dayIdx ? refitDay({ ...day, meals }, week.target) : x)) };
+}
 
 export function validateCustom(raw) {
   const errors = {};
@@ -694,7 +738,8 @@ export function validateCustom(raw) {
 // A stored week with the shape the views rely on (stored data can be damaged).
 const validMeal = (m) => isObject(m) && typeof m.dish === "string" && finite(m.portion)
   && (m.custom === undefined || (isObject(m.custom) && finite(m.custom.kcal) && finite(m.custom.protein)))
-  && (m.ate === undefined || validShare(m.ate));
+  && (m.ate === undefined || validShare(m.ate))
+  && (m.water === undefined || typeof m.water === "boolean") && (m.manual === undefined || typeof m.manual === "boolean");
 const extraPortion = (p) => finite(p) && p >= EXTRA_BOUNDS[0] && p <= EXTRA_BOUNDS[1] && p % EXTRA_STEP === 0;
 const validExtra = (d) => (d.shake === undefined || d.shake === true || extraPortion(d.shake))
   && (d.extra === undefined || (isObject(d.extra) && typeof d.extra.dish === "string" && extraPortion(d.extra.portion)
@@ -716,7 +761,7 @@ export function retarget(week, target) {
   const days = week.days.map((day) => (resolves(day) ? refitDay(day, target) : day));
   const rand = rng(seedOf(week.start, 3));
   days.forEach((day, d) => {
-    if (!resolves(day) || day.meals.some(isLogged) || withinTarget(dayTotals(day), dayTarget(day, target))) return;
+    if (!resolves(day) || day.meals.some((m) => isLogged(m) || m.manual) || withinTarget(dayTotals(day), dayTarget(day, target))) return;
     days[d] = keepChoice(bestDay(dayTarget(day, target), d > 0 ? prevOf(days[d - 1]) : null, d < 6 ? prevOf(days[d + 1]) : null, usedIn(days), rand), day, target);
   });
   return { ...week, target, v: PLAN_VERSION, days };

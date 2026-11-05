@@ -155,17 +155,43 @@ for (let d = 0; d < 7; d++) {
   assert.equal(n.days[d].meals[0].ate, 1, "breakfast kept");
   assert.notEqual(n.days[d].meals[1].dish, n.days[d].meals[3].dish, "lunch and dinner differ");
 }
-// Carry-over: what was eaten over the target yesterday comes off today, at most a quarter of the target.
+// The week evens out: what was eaten over on a day already done is spread over the days left.
 const over = meals.setCustom(a, 2, "middag", { name: "Pizza", kcal: 1500, protein: 40 });
 const overKcal = meals.dayTotals(over.days[2]).kcal - a.target.kcal;
-assert.equal(meals.overBy(over.days[2], a.target), overKcal);
-assert.equal(meals.carryOver(over.days[2], a.target, a.target), -Math.min(Math.floor(a.target.kcal * 0.25 / 50) * 50, Math.round(overKcal / 50) * 50));
-assert.equal(meals.carryOver(a.days[2], a.target, a.target), 0, "nothing logged: nothing carried");
-assert.equal(meals.carryOver(meals.setAte(a, 2, "middag", 0).days[2], a.target, a.target), 0, "under target: nothing added");
-const autoDay = meals.setAdjust(over, 3, meals.carryOver(over.days[2], a.target, a.target), { auto: true });
+{
+  const bal = meals.balanceOf(over, 3); // Wednesday was too much, today is Thursday
+  assert.equal(bal.over, overKcal);
+  assert.deepEqual(bal.days, [3, 4, 5, 6], "Thursday to Sunday share it");
+  assert.equal(bal.take, -Math.round(overKcal / 4 / 50) * 50);
+  assert.equal(bal.unpaid, 0);
+  assert.deepEqual(meals.balanceOf(a, 3), { over: 0, take: 0, days: [3, 4, 5, 6], unpaid: 0 }, "nothing logged: nothing to even out");
+  assert.equal(meals.balanceOf(meals.setAte(a, 2, "middag", 0), 3).take, 0, "under target: nothing added back");
+  assert.equal(meals.balanceOf(over, 6).take, -Math.floor(a.target.kcal * 0.25 / 50) * 50, "Sunday alone: at most a quarter");
+  assert.ok(meals.balanceOf(over, 6).unpaid > 0, "the rest can't be had this week");
+  // One budget for the week: a day under counts against a day over, but nothing is given back.
+  const mixed = meals.setCustom(meals.setCustom(a, 0, "middag", { name: "", kcal: 1000, protein: 40 }), 1, "middag", { name: "", kcal: 100, protein: 10 });
+  const net = meals.dayTotals(mixed.days[0]).kcal + meals.dayTotals(mixed.days[1]).kcal - 2 * a.target.kcal;
+  assert.equal(meals.balanceOf(mixed, 2).over, net >= 100 ? net : 0);
+  assert.ok(meals.balanceOf(mixed, 2).take <= 0);
+  // Rounding to 50 kcal a day is not reported as unpaid; only the cap is.
+  const small = meals.setCustom(a, 0, "middag", { name: "", kcal: meals.mealInfo(a.days[0].meals[3]).kcal + 300, protein: 40 });
+  assert.equal(meals.balanceOf(small, 2).unpaid, 0);
+  // An amount you set yourself on a day already done counts.
+  assert.ok(meals.balanceOf(meals.setPortion(a, 0, "middag", 2.5), 1).over > 100);
+  // A day you set to more yourself is paid back by the others.
+  assert.ok(meals.balanceOf(meals.setAdjust(a, 4, 300), 2).take < 0);
+  // A day you set yourself keeps your number and counts towards it.
+  const mine = meals.setAdjust(over, 4, -500);
+  const b2 = meals.balanceOf(mine, 3);
+  assert.deepEqual(b2.days, [3, 5, 6]);
+  assert.equal(b2.take, -Math.round((overKcal - 500) / 3 / 50) * 50);
+  // A day paid back (with nothing logged) counts as eaten as planned, so the rest of the week stops.
+  const paid = meals.setAdjust(over, 3, -overKcal + (overKcal % 50), { auto: true });
+  assert.ok(meals.balanceOf(paid, 4).over < 100);
+}
+const autoDay = meals.setAdjust(over, 3, meals.balanceOf(over, 3).take, { auto: true });
 assert.ok(autoDay.days[3].adjustAuto && meals.isWeek(autoDay));
 assert.ok(meals.regenerateFrom(autoDay, 3, 5).days[3].adjustAuto, "kept by a new suggestion");
-assert.ok(meals.carryOver(over.days[2], a.target, { kcal: 1900, protein: 170 }) >= -475, "never more than a quarter");
 // Taking a change away again does not leave lean dishes at oversized portions.
 for (let d = 0; d < 7; d++) {
   const back = meals.setAdjust(meals.setAdjust(a, d, -500), d, 0);
@@ -188,6 +214,40 @@ assert.equal(meals.regenerateFrom(meals.setAdjust(a, 5, -500), 4, 3).days[5].adj
 const reAdj = meals.retarget(meals.setAdjust(a, 5, -500), { kcal: a.target.kcal - 100, protein: a.target.protein });
 assert.equal(reAdj.days[5].adjust, -500);
 assert.ok(meals.withinTarget(meals.dayTotals(reAdj.days[5]), meals.dayTarget(reAdj.days[5], reAdj.target)));
+
+// Your own amount: kept, the other meals not yet eaten fit around it, "Auto" hands it back.
+{
+  const mine = meals.setPortion(a, 4, "middag", 0.6);
+  const m = mine.days[4].meals[3];
+  assert.equal(m.portion, 0.6);
+  assert.ok(m.manual && meals.isWeek(mine));
+  assert.ok(!meals.isLogged(m), "not eaten, just set");
+  assert.ok(meals.withinTarget(meals.dayTotals(mine.days[4]), meals.dayTarget(mine.days[4], a.target)), `the rest fits around it: ${JSON.stringify(meals.dayTotals(mine.days[4]))}`);
+  // Undoing "ate" or "something else" does not leave a stale "your amount" behind.
+  assert.equal(meals.setAte(meals.setAte(mine, 4, "middag", 1), 4, "middag", null).days[4].meals[3].manual, undefined);
+  assert.equal(meals.setCustom(meals.setCustom(mine, 4, "middag", { name: "", kcal: 500, protein: 30 }), 4, "middag", null).days[4].meals[3].manual, undefined);
+  // A new suggestion and a new target keep the day you set an amount on.
+  assert.equal(meals.regenerateFrom(mine, 3, 9).days[4].meals[3].portion, 0.6);
+  assert.equal(meals.retarget(mine, { kcal: a.target.kcal - 400, protein: a.target.protein }).days[4].meals[3].portion, 0.6);
+  // Kept when the day is changed afterwards.
+  assert.equal(meals.setAdjust(mine, 4, -500).days[4].meals[3].portion, 0.6);
+  assert.equal(meals.setAte(mine, 4, "frukost", 1).days[4].meals[3].portion, 0.6);
+  const auto = meals.setPortion(mine, 4, "middag", null);
+  assert.equal(auto.days[4].meals[3].manual, undefined);
+  assert.equal(meals.setPortion(a, 4, "middag", 5), null, "at most PORTION_MAX");
+  assert.equal(meals.setPortion(meals.setAte(a, 4, "middag", 1), 4, "middag", 1), null, "eaten: the share is used instead");
+}
+
+// Far down in calories the snack shake is made with water so protein stays near the target.
+{
+  const T = { kcal: 2203, protein: 170 };
+  const w = meals.generateWeek("2026-11-02", T);
+  for (const d of [1, 3, 5]) {
+    const low = meals.setAdjust(w, d, -1000).days[d];
+    const t = meals.dayTotals(low);
+    assert.ok(t.protein >= T.protein - 10 && Math.abs(t.kcal - 1203) <= 1203 * meals.KCAL_TOLERANCE, `day ${d}: ${JSON.stringify(t)}`);
+  }
+}
 
 // The shake is made with water on a day that is tight on calories, with milk on a day with room.
 {

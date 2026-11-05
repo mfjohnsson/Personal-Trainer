@@ -31,11 +31,11 @@ export function mount(el) {
   }
 
   function dayFood() {
-    // Today's calories follow what you logged yesterday (unless you changed today yourself).
+    // The week evens out: what was eaten over the target is spread over the days left.
     const autoOk = mealplan.autoAdjust(today, target);
     if (!autoOk) requestAnimationFrame(() => root.querySelector(".storage-error")?.removeAttribute("hidden"));
     const w = mealplan.weekMeals(start, target);
-    return mealui.dayHtml(w.days[todayIdx], todayIdx, target, mealplan.dayBefore(start, todayIdx, w));
+    return mealui.dayHtml(w.days[todayIdx], todayIdx, target, mealplan.balance(today, target));
   }
 
   function render() {

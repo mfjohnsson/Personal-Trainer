@@ -182,7 +182,7 @@ h2 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; ma
 /* --- Training --- */
 .minimum { font-size: 0.85rem; color: var(--ink-2); margin: 0 0 12px; }
 .card h3 { font-size: 1rem; margin: 12px 0 8px; }
-.badge { margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--ink-2); background: var(--surface); border: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.badge { margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--ink-2); background: var(--surface); border: 1px solid var(--line); font-variant-numeric: tabular-nums; display: inline-block; white-space: nowrap; }
 .badge.ok { color: var(--success); border-color: var(--success); }
 details.day { padding: 0; }
 details.day > summary { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 8px 16px; cursor: pointer; list-style: none; }
@@ -311,6 +311,11 @@ details.meal.skipped > summary .meal-kcal, details.meal.skipped > summary .meal-
 .ate-row .icon-btn:disabled { opacity: 0.4; cursor: default; }
 .ate-val { min-width: 4.5em; text-align: center; font-weight: 650; font-variant-numeric: tabular-nums; }
 .adjust { margin-top: 8px; }
+.link-btn { align-self: flex-start; min-height: 44px; padding: 0 2px; font: inherit; font-size: 0.9rem; font-weight: 600; color: var(--c-vikt); background: none; border: none; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.edit-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.edit-box .ate-row { gap: 6px; flex-wrap: wrap; }
+.edit-box .ate-val { min-width: 3.5em; }
+.edit-box .ate-row .btn-secondary { padding: 8px 10px; }
 .adjust > .btn-secondary { width: 100%; }
 .adjust-panel { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
 .adjust-panel .ate-row { justify-content: center; }

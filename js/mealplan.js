@@ -51,28 +51,28 @@ export function weekMeals(start, target) {
   return week;
 }
 
-// The day before day `idx` of the week starting `start`, with its week's target: { day, target }, or
-// null. Monday looks at last week's Sunday, when that week is stored.
-export function dayBefore(start, idx, week) {
-  if (idx > 0) return { day: week.days[idx - 1], target: week.target };
-  const prev = allWeeks()[prevWeekStart(start)];
-  return meals.isWeek(prev) ? { day: prev.days[6], target: prev.target } : null;
-}
-
-// Today's calories follow yesterday: what you ate over the target is taken off today (meals.carryOver).
-// Left alone when you changed today yourself or today's last meal is eaten. The views call it on every
-// render, so it follows when yesterday's log changes; it only saves when the value changes. Returns false
-// if storage refused.
+// The week evens out: what you ate over the target on earlier days is spread over the days left
+// (meals.balanceOf). Days you changed yourself and days already eaten are left alone. The views call it
+// on every render, so it follows when you log something; it only saves when a value changes. Returns
+// false if storage refused.
 export function autoAdjust(todayIso, target) {
   const start = weekStart(todayIso);
   const idx = plan.dayIndex(start, todayIso);
   if (idx < 0 || idx > 6) return true;
   const week = weekMeals(start, target);
-  const day = week.days[idx];
-  if (meals.adjustByYou(day) || meals.dayOver(day)) return true;
-  const prev = dayBefore(start, idx, week);
-  const v = meals.carryOver(prev?.day, prev?.target, week.target);
-  if (v === meals.adjustOf(day)) return true;
-  const next = meals.setAdjust(week, idx, v, { auto: true });
-  return !next || saveWeek(next);
+  const { take, days } = meals.balanceOf(week, idx);
+  let next = week;
+  for (const d of days) {
+    const day = next.days[d];
+    if (meals.adjustOf(day) === take && (take === 0 || day.adjustAuto)) continue;
+    next = meals.setAdjust(next, d, take, { auto: true }) ?? next;
+  }
+  return next === week || saveWeek(next);
+}
+
+// The week's balance for the views (see meals.balanceOf), for the current week only.
+export function balance(todayIso, target) {
+  const start = weekStart(todayIso);
+  const idx = plan.dayIndex(start, todayIso);
+  return idx < 0 || idx > 6 ? null : meals.balanceOf(weekMeals(start, target), idx);
 }
