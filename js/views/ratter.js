@@ -54,13 +54,23 @@ function listHtml(msg) {
       ${meals.allDishes(g.id).map(rowHtml).join("")}
       <button class="btn-secondary add-dish" type="button" data-act="add" data-group="${g.id}">Lägg till rätt</button>
     </section>`).join("");
+  const gone = meals.GROUPS.flatMap((g) => meals.allDishes(g.id, { removed: true }));
+  const removedHtml = gone.length ? `
+    <section class="card">
+      <h2><span class="dot" style="background: var(--c-midja)"></span>Borttagna rätter</h2>
+      ${gone.map((d) => `<div class="dish-row is-off">
+        <div class="dish-main"><span class="ex-name">${esc(d.name)}</span>
+          <p class="note">${esc(meals.groupOf(d.slot).label)} · ${d.kcal} kcal · ${d.protein} g protein per portion</p></div>
+        <button class="link-btn" type="button" data-act="restore" data-id="${esc(d.id)}" aria-label="Ta tillbaka ${esc(d.name)}">Ta tillbaka</button>
+      </div>`).join("")}
+    </section>` : "";
   return `<div class="view">
     <nav class="subnav" aria-label="Relaterat"><a href="#/kost">&larr; Kost</a></nav>
     <section class="card">
       <h2><span class="dot" style="background: var(--c-vikt)"></span>Rätter</h2>
       <p class="note">Rätter som är påslagna används i veckans förslag och kan väljas när du byter. Stänger du av en rätt byts den ut i resten av veckan.</p>
       <p class="note" id="list-note" role="status" aria-live="polite">${msg ?? ""}</p>
-    </section>${sections}</div>`;
+    </section>${sections}${removedHtml}</div>`;
 }
 
 export function mount(el) {
@@ -92,8 +102,8 @@ export function mount(el) {
           ${food && food.name.toLowerCase() !== r.name.toLowerCase() ? `<span class="note">Räknas som ${esc(food.name)}</span>` : ""}
           ${!food ? `<span class="note warn">Finns inte i livsmedelsdatabasen</span>` : ""}</div>
         <div class="ing-amount">
-          <input type="text" inputmode="decimal" autocomplete="off" data-amount="${i}" value="${Number.isFinite(r.amount) ? nf.format(r.amount).replace(/\s/g, "") : ""}" aria-label="Mängd ${esc(r.name)}">
-          <select data-unit="${i}" aria-label="Enhet ${esc(r.name)}">${meals.UNITS.map((u) => `<option${u === r.unit ? " selected" : ""}>${u}</option>`).join("")}</select>
+          ${editing.showAmounts ? `<input type="text" inputmode="decimal" autocomplete="off" data-amount="${i}" value="${Number.isFinite(r.amount) ? nf.format(r.amount).replace(/\s/g, "") : ""}" aria-label="Mängd ${esc(r.name)}">
+          <select data-unit="${i}" aria-label="Enhet ${esc(r.name)}">${meals.UNITS.map((u) => `<option${u === r.unit ? " selected" : ""}>${u}</option>`).join("")}</select>` : ""}
           <button type="button" class="icon-btn" data-act="remove" data-i="${i}" aria-label="Ta bort ${esc(r.name)}">✕</button>
         </div>
       </div>`;
@@ -119,7 +129,11 @@ export function mount(el) {
         <p class="field-error" id="err-ingredients" hidden></p>
       </div>
       <p class="calc-total" id="totals" aria-live="polite">${totalsText()}</p>
-      <p class="note">Mängderna styr bara förhållandet mellan ingredienserna. Portionen skalas ändå efter dagens mål.</p>`
+      ${editing.showAmounts
+        ? `<p class="note">Mängderna styr bara hur mycket det är av varje ingrediens jämfört med de andra. Portionen skalas ändå efter dagens mål.</p>
+          <button class="link-btn" type="button" data-act="amounts-hide">Dölj mängder</button>`
+        : `<p class="note">Lägg bara till ingredienserna. Appen föreslår mängder och skalar portionen efter dagens mål. Justera bara om rätten ska ha mer eller mindre av något.</p>
+          ${editing.rows.length ? `<button class="link-btn" type="button" data-act="amounts-show">Justera mängder</button>` : ""}`}`
       : `<p class="note">${loadState === "failed" ? "Kunde inte läsa livsmedelsdata. Försök igen." : "Hämtar livsmedelsdata…"}</p>`;
     return `<div class="view"><section class="card">
       <h2><span class="dot" style="background: var(--c-vikt)"></span>${d ? "Ändra rätt" : "Ny rätt"} · ${group.label}</h2>
@@ -136,9 +150,22 @@ export function mount(el) {
         <button class="btn-primary" type="submit"${loadState === "ready" ? "" : " disabled"}>Spara</button>
         <button class="btn-secondary" type="button" data-act="cancel">Avbryt</button>
         ${d && isEdited(d.id) ? `<button class="btn-secondary" type="button" data-act="reset">Återställ originalet</button>` : ""}
+        ${d ? removeHtml(d) : ""}
         <p class="field-error" id="form-note" role="alert" hidden></p>
       </form>
     </section></div>`;
+  }
+
+  // "Ta bort rätten", asked twice. Blocked (with the reason) for the top-up snack or a meal with too few dishes.
+  function removeHtml(d) {
+    const block = dishes.removeBlock(d.id);
+    if (block) return `<p class="note">Kan inte tas bort: ${esc(block)}</p>`;
+    if (!editing.confirmRemove) return `<button class="btn-secondary" type="button" data-act="remove-dish">Ta bort rätten</button>`;
+    return `<div class="remove-confirm" role="group" aria-label="Bekräfta borttagning">
+      <p class="note warn">Ta bort ${esc(d.name)}? Den används inte längre och byts ut i resten av veckan. Du kan ta tillbaka den längst ner på sidan Rätter.</p>
+      <button class="btn-primary" type="button" data-act="remove-yes">Ja, ta bort</button>
+      <button class="btn-secondary" type="button" data-act="remove-no">Behåll</button>
+    </div>`;
   }
 
   function render(focusSel) {
@@ -181,6 +208,9 @@ export function mount(el) {
     const raw = { name: editing.name, ingredients: ingredientsOf(), kcal: m.kcal, protein: m.protein, fat: m.fat, carbs: m.carbs,
       meals: choice === "both" || !choice ? meals.MAIN : [choice] };
     const { values, errors } = meals.validateDish(raw, editing.slot);
+    // An error about the amounts (too small, too big, missing) can only be fixed with them in view.
+    const amountError = !!errors.ingredients && editing.rows.length > 0 && !errors.name;
+    if (amountError && !editing.showAmounts) { editing.showAmounts = true; render("#d-name"); }
     for (const key of ["name", "ingredients"]) {
       const err = el.querySelector(`#err-${key}`);
       err.hidden = !errors[key];
@@ -188,7 +218,7 @@ export function mount(el) {
     }
     el.querySelector("#d-name").toggleAttribute("aria-invalid", !!errors.name);
     if (errors.name) { el.querySelector("#d-name").focus(); return; }
-    if (errors.ingredients) { el.querySelector("#food-search").focus(); return; }
+    if (errors.ingredients) { el.querySelector(amountError ? "[data-amount]" : "#food-search").focus(); return; }
     const id = dishes.saveDish(editing.id, editing.slot, values, replace);
     if (id === null) return fail(SAVE_ERROR);
     msg = `Sparat: ${esc(values.name)}.`;
@@ -261,6 +291,25 @@ export function mount(el) {
       msg = "Originalet är tillbaka.";
       editing = null;
       render(`[data-act="edit"][data-id="${back}"]`);
+    } else if (act === "amounts-show" || act === "amounts-hide") {
+      syncName();
+      editing.showAmounts = act === "amounts-show";
+      render(editing.showAmounts ? "[data-amount]" : '[data-act="amounts-show"]');
+    } else if (act === "remove-dish" || act === "remove-no") {
+      syncName();
+      editing.confirmRemove = act === "remove-dish";
+      render(act === "remove-dish" ? '[data-act="remove-no"]' : '[data-act="remove-dish"]');
+    } else if (act === "remove-yes") {
+      const name = meals.dishOf(editing.id).name;
+      if (!dishes.removeDish(editing.id, replace)) return fail(SAVE_ERROR);
+      msg = `${esc(name)} är borttagen.`;
+      editing = null;
+      render(); // back to the top, where the note says what happened
+    } else if (act === "restore") {
+      const name = meals.dishOf(id).name;
+      if (!dishes.restoreDish(id)) { msg = SAVE_ERROR; render(); return; }
+      msg = `${esc(name)} är tillbaka och används igen.`;
+      render(`[data-act="edit"][data-id="${CSS.escape(id)}"]`);
     } else if (act === "hide" || act === "show") {
       const name = meals.dishOf(id).name;
       if (!dishes.setVisible(id, act === "show", replace)) { msg = SAVE_ERROR; render(); return; }

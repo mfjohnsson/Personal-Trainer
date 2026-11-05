@@ -101,6 +101,10 @@ export const minDishes = (slot) => (slot === "frukost" ? 1 : 2);
 export const DISHES = { frukost: [], lunch: [], mellanmal: [], middag: [] };
 const dishById = new Map(); // every dish, hidden ones too, so weeks already planned keep resolving
 const shown = new Set();
+// Dishes you removed: gone from the editor and never planned, but still resolved so earlier days that
+// used them keep showing (overlay.removed, set by applyDishes).
+let removed = new Set();
+export const isRemoved = (id) => removed.has(id);
 export const SHAKE_ID = "snack-shake";
 let topup = SHAKE_ID; // the snack used as protein top-up (see below), set by applyDishes
 export const topupId = () => topup;
@@ -118,7 +122,7 @@ function register(slot, d, show) {
 }
 
 // overlay = { items: { [id]: { slot, name, kcal, protein, fat, carbs, ingredients, meals? } }, visible: { [id]: boolean },
-//   topup?: id of the snack used as protein top-up }.
+//   removed?: { [id]: true }, topup?: id of the snack used as protein top-up }.
 // An item with a built-in id replaces that dish; any other id is a dish of the user's own.
 const isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
@@ -131,6 +135,7 @@ export function applyDishes(overlay = {}) {
   const raw = isObject(overlay) ? overlay : {};
   const items = Object.fromEntries(Object.entries(isObject(raw.items) ? raw.items : {}).filter(([, it]) => validItem(it)));
   const visible = isObject(raw.visible) ? raw.visible : {};
+  removed = new Set(Object.entries(isObject(raw.removed) ? raw.removed : {}).filter(([, v]) => v === true).map(([id]) => id));
   dishById.clear(); shown.clear();
   for (const slot of SLOT_IDS) DISHES[slot].length = 0;
   const builtIn = new Set();
@@ -139,19 +144,26 @@ export function applyDishes(overlay = {}) {
       builtIn.add(b.id);
       const { hidden, ...plain } = b;
       const d = items[b.id] ? { ...items[b.id], id: b.id } : plain;
-      register(slot, d, visible[b.id] ?? !hidden);
+      register(slot, d, !removed.has(b.id) && (visible[b.id] ?? !hidden));
     }
   }
   for (const [id, it] of Object.entries(items)) {
-    if (!builtIn.has(id)) register(it.slot, { ...it, id }, visible[id] ?? true);
+    if (!builtIn.has(id)) register(it.slot, { ...it, id }, !removed.has(id) && (visible[id] ?? true));
   }
-  // The top-up may be any protein-rich snack, also one hidden from the snack rotation.
-  topup = typeof raw.topup === "string" && isTopupCandidate(dishById.get(raw.topup)) ? raw.topup : SHAKE_ID;
+  // The top-up may be any protein-rich snack, also one hidden from the snack rotation, but not a removed one.
+  // Otherwise the shake, or (if you removed it) the first protein-rich snack still on the list.
+  const usable = (id) => typeof id === "string" && !removed.has(id) && isTopupCandidate(dishById.get(id));
+  topup = usable(raw.topup) ? raw.topup : usable(SHAKE_ID) ? SHAKE_ID
+    : [...dishById.keys()].find(usable) ?? SHAKE_ID;
   // Damaged or hand-edited flags must not leave a meal without enough dishes (nothing could be planned).
+  // Removed dishes are the last resort.
   for (const slot of SLOT_IDS) {
-    for (const d of dishById.values()) {
-      if (DISHES[slot].length >= minDishes(slot)) break;
-      if (fits(d, slot) && !DISHES[slot].includes(d)) { shown.add(d.id); DISHES[slot].push(d); }
+    for (const lastResort of [false, true]) {
+      for (const d of dishById.values()) {
+        if (DISHES[slot].length >= minDishes(slot)) break;
+        if (removed.has(d.id) !== lastResort) continue;
+        if (fits(d, slot) && !DISHES[slot].includes(d)) { shown.add(d.id); DISHES[slot].push(d); }
+      }
     }
   }
 }
@@ -168,10 +180,10 @@ export const GROUPS = [
 ];
 export const groupOf = (slot) => GROUPS.find((g) => g.slots.includes(slot));
 
-// Every dish in a group, hidden ones too, for the editor.
-export const allDishes = (group) => {
+// Every dish in a group, hidden ones too, for the editor. Removed dishes only with `{ removed: true }`.
+export const allDishes = (group, { removed: wantRemoved = false } = {}) => {
   const g = GROUPS.find((x) => x.id === group) ?? groupOf(group);
-  return [...dishById.values()].filter((d) => g.slots.includes(d.slot));
+  return [...dishById.values()].filter((d) => g.slots.includes(d.slot) && removed.has(d.id) === wantRemoved);
 };
 
 export const UNITS = ["g", "dl", "st", "skivor"];
@@ -479,8 +491,9 @@ function fitPlan(items, target, bounds, mode, ex) {
   if (!ex || mode === "off") return plain;
   const big = plain.scales.some((v, i) => bounds[i][0] !== bounds[i][1] && v > NORMAL_MAX + 1e-9);
   const short = plain.totals.protein < target.protein - PROTEIN_TOLERANCE;
-  // When the snack already is the top-up dish, the snack itself grows instead of a second one.
-  if (mode === "auto" && (!(big || short) || items.some((i) => i?.id === ex.id))) return plain;
+  // When the snack already is the top-up dish and can still grow, it grows instead of a second one.
+  // Once it is eaten (or its amount is set by you) it can't, so a second one may be added.
+  if (mode === "auto" && (!(big || short) || items.some((it, i) => it?.id === ex.id && bounds[i][0] !== bounds[i][1]))) return plain;
   // The top-up as it is, and made with water when the dish has that version: the same protein for far
   // fewer calories, so it wins on a day that is tight on calories, and milk on a day with room.
   const variants = [{ dish: ex, water: false }, ...(ex.water ? [{ dish: ex.water, water: true }] : [])];
@@ -543,8 +556,9 @@ function keepChoice(fresh, old, target) {
 
 const plainDay = ({ shake: _s, extra: _e, extraOff: _o, ...plain }) => plain;
 
-// A top-up can be added unless the day's snack already is that dish (then the snack itself is it).
-export const canAddExtra = (day) => !!topupDish() && !day.meals.some((m) => !m.custom && m.dish === topup);
+// A top-up can be added unless the day's snack already is that dish and can still grow (then the snack
+// itself is it). An eaten shake, or one whose amount you set, can't grow, so a second one is allowed.
+export const canAddExtra = (day) => !!topupDish() && !day.meals.some((m) => !m.custom && !isLogged(m) && !m.manual && m.dish === topup);
 
 // The day as it would be with the top-up added by you, re-fitted; null when it can't be added.
 // Also shows the effect before you add it.

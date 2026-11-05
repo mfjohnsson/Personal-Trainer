@@ -383,6 +383,23 @@ assert.notEqual(meals.regenerateFrom(a, 0, 2, a.days[0].meals[2].dish).days[0].m
   const shakeWeek = meals.changeDish(a, ni, "mellanmal", meals.SHAKE_ID);
   assert.ok(!meals.canAddExtra(shakeWeek.days[ni]) && meals.withExtra(shakeWeek.days[ni], T) === null);
   assert.equal(meals.setExtra(shakeWeek, ni, true), null);
+  // But once that shake is eaten it can't grow any more, so a second one can top up a day short of protein
+  // (breakfast and lunch eaten small, dinner set to an own amount: nothing else can make up for it).
+  {
+    let w = shakeWeek;
+    w = meals.setAte(w, ni, "frukost", 0.5);
+    w = meals.setAte(w, ni, "lunch", 0.5);
+    w = meals.setPortion(w, ni, "middag", 1);
+    const before = meals.setExtra(w, ni, false); // without a top-up: stuck short of protein
+    assert.ok(meals.dayTotals(before.days[ni]).protein < T.protein - meals.PROTEIN_TOLERANCE, "the day is short without a top-up");
+    w = meals.setAte(w, ni, "mellanmal", 1);
+    const eatenDay = w.days[ni];
+    // Added by itself when the day falls short, and it brings protein up.
+    assert.ok(eatenDay.extra, "auto top-up after an eaten shake");
+    assert.ok(meals.dayTotals(eatenDay).protein > meals.dayTotals(meals.setExtra(w, ni, false).days[ni]).protein, "the top-up adds protein");
+    const off = meals.setExtra(w, ni, false).days[ni];
+    assert.ok(meals.canAddExtra(off) && meals.withExtra(off, T).extra, "an eaten shake snack allows adding a top-up by hand");
+  }
   const full = a.days[ni];
   const shrunk = meals.withExtra(full, T);
   assert.ok(Math.abs(meals.dayTotals(shrunk).protein - meals.dayTotals(full).protein) <= meals.PROTEIN_TOLERANCE && mealKcal(shrunk) < mealKcal(full));
@@ -533,5 +550,33 @@ meals.applyDishes();
 assert.equal(dishes.canHide("lunch-torsk"), true);
 meals.applyDishes({ visible: Object.fromEntries(meals.allDishes("huvudratt").slice(2).map((d) => [d.id, false])) });
 assert.equal(dishes.canHide(meals.DISHES.lunch[0].id), false, "two shown dishes must stay");
+assert.ok(dishes.removeBlock(meals.DISHES.lunch[0].id), "nor can they be removed");
+meals.applyDishes();
+
+// Removed dishes: out of the editor and never planned, but still resolved for days that used them.
+{
+  const used = a.days[0].meals[1].dish;
+  meals.applyDishes({ removed: { [used]: true, "snack-yoghurt": true } });
+  assert.ok(meals.isRemoved(used) && !meals.isVisible(used) && meals.dishOf(used), "a removed dish still resolves");
+  assert.ok(!meals.allDishes("huvudratt").some((d) => d.id === used) && meals.allDishes("huvudratt", { removed: true }).some((d) => d.id === used));
+  assert.ok(!meals.DISHES.lunch.some((d) => d.id === used) && !meals.DISHES.middag.some((d) => d.id === used));
+  assert.ok(meals.isWeek(a), "weeks that used it stay valid");
+  const fresh = meals.generateWeek("2026-06-01", targets[3]);
+  assert.ok(fresh.days.every((d) => d.meals.every((m) => !meals.isRemoved(m.dish))), "removed dishes are never planned");
+  assert.ok(meals.replaceHidden(structuredClone(a), 0).days.every((d) => d.meals.every((m) => !meals.isRemoved(m.dish))), "and replaced in the rest of the week");
+  assert.equal(dishes.removeBlock(meals.SHAKE_ID) !== null, true, "the top-up snack can't be removed");
+  // A removed shake is not the fallback top-up when a protein-rich snack of your own is left.
+  const kvarg = { slot: "mellanmal", name: "Kvarg", kcal: 180, protein: 30, fat: 1, carbs: 12, ingredients: [["Kvarg", 300, "g", "Mejeri och ägg"]] };
+  meals.applyDishes({ items: { "egen-kvarg": kvarg }, removed: { [meals.SHAKE_ID]: true }, topup: "saknas" });
+  assert.equal(meals.topupId(), "egen-kvarg");
+  assert.ok(!meals.DISHES.mellanmal.some((d) => d.id === meals.SHAKE_ID));
+  // Removing every snack still leaves enough to plan with (removed ones as last resort).
+  meals.applyDishes({ removed: Object.fromEntries(meals.allDishes("mellanmal").map((d) => [d.id, true])) });
+  assert.ok(meals.DISHES.mellanmal.length >= meals.minDishes("mellanmal"));
+  meals.applyDishes();
+  assert.equal(dishes.removeDish("lunch-torsk"), false, "no storage in Node: rolled back");
+  assert.ok(!meals.isRemoved("lunch-torsk") && meals.isVisible("lunch-torsk"));
+  assert.equal(dishes.restoreDish("lunch-torsk"), false, "only a removed dish can be restored");
+}
 meals.applyDishes();
 console.log("ok");

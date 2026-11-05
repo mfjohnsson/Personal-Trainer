@@ -1,6 +1,6 @@
 // The user's changes to the dish catalog: stored edits, own dishes and which dishes are shown.
 // Storage shape: { items: { [id]: { slot, name, kcal, protein, fat, carbs, ingredients, meals? } }, visible: { [id]: boolean },
-//   topup?: id }.
+//   removed?: { [id]: true }, topup?: id }.
 import { get, setMany } from "./store.js";
 import * as meals from "./meals.js";
 
@@ -61,4 +61,30 @@ export function setVisible(id, show, replace) {
   if (!show && !canHide(id)) return false;
   const cur = get("dishes") ?? {};
   return commit({ ...cur, visible: { ...cur.visible, [id]: show } }, new Set(), replace);
+}
+
+// Why a dish can't be removed, or null when it can: the top-up snack (pick another first), or a meal
+// that would be left with too few dishes.
+export function removeBlock(id) {
+  const d = meals.dishOf(id);
+  if (!d || meals.isRemoved(id)) return "Rätten finns inte.";
+  if (id === meals.topupId()) return "Rätten är proteinpåfyllning. Välj en annan påfyllning först.";
+  if (meals.isVisible(id) && !canHide(id)) return `Minst ${meals.minDishes(d.slot)} rätter per måltid behövs.`;
+  return null;
+}
+
+// Removes a dish: gone from the list and never planned again. It is replaced in the rest of this week
+// (`replace` as in commit); days already planned with it keep resolving. Can be brought back.
+export function removeDish(id, replace) {
+  if (removeBlock(id)) return false;
+  const cur = get("dishes") ?? {};
+  return commit({ ...cur, removed: { ...cur.removed, [id]: true } }, new Set(), replace);
+}
+
+// Brings a removed dish back, switched on.
+export function restoreDish(id) {
+  if (!meals.isRemoved(id)) return false;
+  const cur = get("dishes") ?? {};
+  const { [id]: _gone, ...removed } = cur.removed ?? {};
+  return commit({ ...cur, removed, visible: { ...cur.visible, [id]: true } }, new Set());
 }
