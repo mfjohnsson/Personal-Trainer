@@ -18,7 +18,20 @@ export function prevWeekStart(start) {
   return plan.isoDate(d);
 }
 
+export function nextWeekStart(start) {
+  const d = plan.parseIso(start);
+  d.setDate(d.getDate() + 7);
+  return plan.isoDate(d);
+}
+
 const allWeeks = () => (isObject(get("meals")) ? get("meals") : {});
+
+// Last week's result (meals.weekResult), or null when it was never planned. Its dishes must still resolve.
+export function lastWeekResult(start) {
+  const prev = allWeeks()[prevWeekStart(start)];
+  if (!meals.isWeek(prev) || !prev.days.every((day) => day.meals.every((m) => m.custom || meals.dishOf(m.dish)))) return null;
+  return meals.weekResult(prev, 7);
+}
 
 // Stores one week; old weeks beyond KEEP_WEEKS are dropped. Returns false if storage refused.
 export function saveWeek(week) {

@@ -10,9 +10,15 @@ const amount = (i) => `${nf.format(i.amount)} ${i.unit}`;
 const labelOf = (slot) => meals.SLOTS.find((s) => s.id === slot).label;
 
 const openMeals = new Set(); // "day:slot" of opened meals, kept while the app runs
+
+// Which week Kost and the shopping list show: this one, or next week (to plan it and cook ahead).
+// Kept while the app runs, so going to the shopping list and back keeps the choice.
+export const weekView = { next: false };
 let customFor = null; // "day:slot" whose "Åt något annat" form is open
 let adjustFor = null; // day whose "Justera dagen" panel is open
 const editOpen = new Set(); // "day:slot" whose "Ändra mängd eller rätt" section is open
+// Closes the open form and panel, e.g. when the view switches to another week (the keys are per weekday).
+export function closePanels() { customFor = null; adjustFor = null; }
 const pct = (share) => `${Math.round(share * 100)} %`;
 const signed = (v) => (v > 0 ? `+${nf.format(v)}` : v < 0 ? `−${nf.format(-v)}` : "0");
 
@@ -111,7 +117,8 @@ function customForm(d, slot) {
   </form>`;
 }
 
-function mealHtml(m, d, day) {
+// `planOnly`: a week not started yet, so nothing can be marked as eaten; the amount and dish are shown open.
+function mealHtml(m, d, day, planOnly = false) {
   const key = `${d}:${m.slot}`;
   const info = meals.mealInfo(m);
   const label = labelOf(m.slot);
@@ -149,7 +156,8 @@ function mealHtml(m, d, day) {
 </div>
         ${m.manual ? `<p class="note">Du har satt mängden. Resten av dagen anpassas efter den.</p>
           ${portionBtn("", "Låt appen sätta mängden", "link-btn")}` : ""}`;
-    const eaten = customFor === key ? customForm(d, m.slot)
+    const eaten = planOnly ? ""
+      : customFor === key ? customForm(d, m.slot)
       : m.ate === undefined ? `<div class="btn-row">${ateBtn(1, "✓ Ätit", "btn-primary")}${ateBtn(0, "✕ Åt inte", "btn-secondary")}</div>${otherBtn}`
       : m.ate === 0 ? `<div class="btn-row">${ateBtn("", "Ångra", "btn-secondary")}${otherBtn}</div>`
       : `<div class="ate-row"><span class="pick-label">Ätit</span>
@@ -160,9 +168,9 @@ function mealHtml(m, d, day) {
         ${otherBtn}`;
     // Amount and dish are behind one button, so an open meal shows what to eat and what you did.
     const canEdit = m.ate === undefined && customFor !== key;
-    const editing = canEdit && editOpen.has(key);
+    const editing = canEdit && (planOnly || editOpen.has(key));
     const editHtml = !canEdit ? ""
-      : `<button class="link-btn" type="button" data-act="edit-toggle" ${attrs} aria-expanded="${editing}">${editing ? "Stäng ändra" : "Ändra mängd eller rätt"}</button>
+      : `${planOnly ? "" : `<button class="link-btn" type="button" data-act="edit-toggle" ${attrs} aria-expanded="${editing}">${editing ? "Stäng ändra" : "Ändra mängd eller rätt"}</button>`}
         ${editing ? `<div class="edit-box">${amountRow}${picker}<p class="note macros">Fett ${info.fat} g · Kolhydrater ${info.carbs} g</p></div>` : ""}`;
     body = `${m.ate === 0 ? `<p class="note">Du åt inte det här. Resten av dagen räknas om.</p>`
         : `<p class="note">${info.ingredients.map((i) => esc(`${amount(i)} ${i.name.toLowerCase()}`)).join(" · ")}</p>`}
@@ -236,7 +244,8 @@ function adjustHtml(day, d, target, bal, lowShown) {
 }
 
 // One day's meals. `bal` (optional) is the week's balance (mealplan.balance), for "the week is over".
-export function dayHtml(day, d, target, bal = null) {
+// `planOnly`: next week, planned but not started (see mealHtml).
+export function dayHtml(day, d, target, bal = null, { planOnly = false } = {}) {
   const goal = meals.dayTarget(day, target);
   const t = meals.dayTotals(day);
   const ok = meals.withinTarget(t, goal);
@@ -257,17 +266,19 @@ export function dayHtml(day, d, target, bal = null) {
   if (Math.abs(dp) > meals.PROTEIN_TOLERANCE) parts.push(`${nf.format(Math.abs(dp))} g ${dp < 0 ? "under" : "över"} proteinmålet`);
   const missHtml = ok || !(day.meals.some((m) => meals.isLogged(m) || m.manual) || meals.adjustOf(day)) ? ""
     : `<p class="note warn">Dagen ligger ${parts.join(" och ")}. ${dk < 0 ? "Resten av dagen är på normal storlek i stället för att fyllas på för att ta igen det. " : ""}${meals.adjustOf(day) ? "Prova en mindre justering, eller låt det vara." : "Det gör inget, en enstaka dag jämnar ut sig."}</p>`;
-  return `<div class="meals">${day.meals.map((m) => mealHtml(m, d, day)).join("")}${extra ? extraHtml(extra, d) : ""}</div>
+  return `<div class="meals">${day.meals.map((m) => mealHtml(m, d, day, planOnly)).join("")}${extra ? extraHtml(extra, d) : ""}</div>
     <p class="note day-total">Summa ${t.kcal} av ${goal.kcal} kcal · ${t.protein} av ${goal.protein} g protein</p>
     ${missHtml}${lowHtml}
     <div class="adjust">${adjustHtml(day, d, target, bal, !!lowHtml)}</div>`;
 }
 
-// Wires the meal rows inside `el` for the week starting `start`. `rerender()` draws the view again.
+// Wires the meal rows inside `el` for the week starting `start` (a date, or a function giving it when
+// the view can switch weeks). `rerender()` draws the view again.
 export function bindMeals(el, { start, target, rerender, failed }) {
   customFor = null;
   adjustFor = null;
-  const week = () => mealplan.weekMeals(start, target);
+  const startOf = typeof start === "function" ? start : () => start;
+  const week = () => mealplan.weekMeals(startOf(), target);
   const save = (next, focusSel) => {
     const ok = !!next && mealplan.saveWeek(next);
     rerender();

@@ -372,3 +372,40 @@ details.meal.skipped > summary .meal-kcal, details.meal.skipped > summary .meal-
 .log-row { display: grid; grid-template-columns: 64px 1fr auto auto; align-items: center; gap: 8px; min-height: 44px; border-top: 1px solid var(--grid); font-size: 0.9rem; font-variant-numeric: tabular-nums; }
 details.day > .pass-btn { width: calc(100% - 32px); }
 .ex-head > .ex-name, .ex-head > .pick { flex: 1; min-width: 0; }
+
+/* --- Week status (Kost) --- */
+.day-chips { margin: 4px 0 12px; }
+.day-chips .chip { gap: 2px; min-height: 48px; justify-content: center; font: inherit; font-size: 0.68rem; font-weight: 600; border: 2px solid transparent; cursor: pointer; }
+.day-chips .chip-sym { font-size: 0.85rem; font-weight: 700; }
+.day-chips .st-ok { color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); }
+.day-chips .st-miss { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.day-chips .st-later { color: var(--ink-3); background: var(--surface); }
+.day-chips .st-today { color: var(--c-vikt); background: var(--c-vikt-soft); }
+.day-chips .chip.is-today { border-color: var(--c-vikt); }
+.day-chips .st-ok .chip-day, .day-chips .st-miss .chip-day, .day-chips .st-today .chip-day { color: inherit; }
+.week-result { padding: 12px; margin-bottom: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.week-result.is-ok { border-color: var(--success); background: color-mix(in srgb, var(--success) 10%, var(--surface)); }
+.week-result.is-miss { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
+.week-result .note { margin-bottom: 0; }
+.verdict { margin: 0 0 8px; font-size: 1.15rem; font-weight: 700; }
+.verdict.ok { color: var(--success); }
+.verdict.miss { color: var(--danger); }
+.verdict-label { margin: 0 0 8px; font-size: 0.9rem; font-weight: 600; color: var(--ink-2); }
+.res-row { display: grid; grid-template-columns: 1.4em 1fr auto; align-items: center; gap: 6px; min-height: 32px; font-size: 0.95rem; }
+.res-val { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.res-ok { color: var(--success); font-weight: 700; }
+.res-miss { color: var(--danger); font-weight: 700; }
+details.card.day.is-today { border: 2px solid var(--c-vikt); }
+details.card.day.is-today > summary .day-name { color: var(--c-vikt); }
+details.card.day.is-past:not([open]) > summary .day-name, details.card.day.is-past:not([open]) > summary .day-pass { color: var(--ink-3); }
+.week-seg { margin-bottom: 12px; }
+
+/* --- Prep list (next week) --- */
+.card h3.prep-head { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); margin: 16px 0 4px; }
+details.prep { border-top: 1px solid var(--line); }
+details.prep > summary { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; padding: 10px 0; cursor: pointer; list-style: none; }
+details.prep > summary::-webkit-details-marker { display: none; }
+.prep-name { font-weight: 600; min-width: 0; }
+.prep-count { font-weight: 650; font-variant-numeric: tabular-nums; }
+.prep-days { grid-column: 1 / -1; font-size: 0.85rem; color: var(--ink-3); }
+details.prep > .note { margin: 0 0 12px; }

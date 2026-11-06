@@ -6,6 +6,7 @@ import * as meals from "../meals.js";
 import * as mealplan from "../mealplan.js";
 import { todayIso, storageErrorHtml } from "./training.js";
 import { esc } from "../html.js";
+import { weekView } from "./mealui.js";
 
 export const title = "Inköpslista";
 
@@ -34,7 +35,7 @@ export function listOf(week, from) {
   return [...groups].filter(([, list]) => list.length);
 }
 
-const amountText = (it) => (it.unit === "g" && it.amount >= 1000 ? `${nf.format(Math.round(it.amount / 100) / 10)} kg` : `${nf.format(it.amount)} ${it.unit}`);
+export const amountText = (it) => (it.unit === "g" && it.amount >= 1000 ? `${nf.format(Math.round(it.amount / 100) / 10)} kg` : `${nf.format(it.amount)} ${it.unit}`);
 
 export function mount(el) {
   const target = mealplan.currentTarget();
@@ -44,11 +45,13 @@ export function mount(el) {
     return;
   }
   const today = todayIso();
-  const start = mealplan.weekStart(today);
-  const todayIdx = Math.min(Math.max(plan.dayIndex(start, today), 0), 6);
+  const thisStart = mealplan.weekStart(today);
+  const todayIdx = Math.min(Math.max(plan.dayIndex(thisStart, today), 0), 6);
+  // This week or next (chosen here or in Kost); each week keeps its own ticks.
+  let start = weekView.next ? mealplan.nextWeekStart(thisStart) : thisStart;
 
   const stored = () => get("shopping")?.[start] ?? {};
-  const fromOf = () => (Number.isInteger(stored().from) ? stored().from : 0);
+  const fromOf = () => (!weekView.next && Number.isInteger(stored().from) ? stored().from : 0);
   const checkedOf = () => new Set(Array.isArray(stored().checked) ? stored().checked : []);
 
   function save(entry) {
@@ -75,10 +78,14 @@ export function mount(el) {
       <nav class="subnav" aria-label="Relaterat"><a href="#/kost">&larr; Kost</a></nav>
       <section class="card">
         <h2><span class="dot" style="background: var(--c-midja)"></span>Inköpslista <span class="count">${done} av ${total}</span></h2>
-        <div class="seg" role="group" aria-label="Vilka dagar">
+        <div class="seg week-seg" role="group" aria-label="Vilken vecka">
+          <button type="button" data-next="0" aria-pressed="${!weekView.next}">Den här veckan</button>
+          <button type="button" data-next="1" aria-pressed="${weekView.next}">Nästa vecka</button>
+        </div>
+        ${weekView.next ? "" : `<div class="seg" role="group" aria-label="Vilka dagar">
           <button type="button" data-from="0" aria-pressed="${from === 0}">Hela veckan</button>
           <button type="button" data-from="${todayIdx}" aria-pressed="${from === todayIdx && todayIdx !== 0}"${todayIdx === 0 ? " disabled" : ""}>Från idag</button>
-        </div>
+        </div>`}
         <p class="note">Ändrar du en måltid uppdateras listan. Mängderna är avrundade.</p>
         ${done ? `<button class="btn-secondary wide" type="button" data-act="clear">Avmarkera alla</button>` : ""}
         ${storageErrorHtml}
@@ -99,7 +106,12 @@ export function mount(el) {
   el.onclick = (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
-    if (btn.dataset.from !== undefined) { if (!save({ from: +btn.dataset.from })) failed(); else render(`[data-from="${btn.dataset.from}"]`); }
+    if (btn.dataset.next !== undefined) {
+      weekView.next = btn.dataset.next === "1";
+      start = weekView.next ? mealplan.nextWeekStart(thisStart) : thisStart;
+      render(`[data-next="${btn.dataset.next}"]`);
+    }
+    else if (btn.dataset.from !== undefined) { if (!save({ from: +btn.dataset.from })) failed(); else render(`[data-from="${btn.dataset.from}"]`); }
     else if (btn.dataset.act === "clear") { if (!save({ checked: [] })) failed(); else render(); }
   };
   render();

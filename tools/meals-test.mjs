@@ -578,5 +578,51 @@ meals.applyDishes();
   assert.ok(!meals.isRemoved("lunch-torsk") && meals.isVisible("lunch-torsk"));
   assert.equal(dishes.restoreDish("lunch-torsk"), false, "only a removed dish can be restored");
 }
+// How the week went: a planned week passes, a big day over makes the day and (unpaid) the week fail.
+{
+  const t = targets[3];
+  const w = meals.generateWeek("2026-03-02", t);
+  const planned = meals.weekResult(w, 0);
+  assert.ok(planned.ok && !planned.over && planned.days.every((x) => !x.done), "a planned week is on track, nothing done yet");
+  assert.equal(planned.budget, t.kcal * 7);
+  assert.ok(meals.weekResult(w, 7).over, "after Sunday every day is done");
+  // A day of 4 000 kcal more, on four days, can't be evened out: the days fail and so do the calories.
+  let big = w;
+  for (const d of [0, 1, 2, 3]) big = meals.setCustom(big, d, "middag", { name: "Fest", kcal: 4000, protein: 20 });
+  const r = meals.weekResult(big, 7);
+  assert.ok(!r.kcalOk && !r.ok && r.over, "way over budget fails the week");
+  assert.ok(!r.days[0].kcalOk && r.days[0].done && r.days[6].ok, "the party day fails, a planned day passes");
+  // Protein: a low-protein week fails on protein only.
+  let low = w;
+  for (let d = 0; d < 7; d++) for (const s of meals.SLOTS) low = meals.setCustom(low, d, s.id, { name: "Pasta", kcal: Math.round(t.kcal / 4), protein: 10 });
+  for (let d = 0; d < 7; d++) low = meals.setExtra(low, d, false);
+  const lr = meals.weekResult(low, 7);
+  assert.ok(lr.kcalOk && !lr.proteinOk && lr.proteinDays < 7, "too little protein fails on protein");
+  // Eating less is not a calorie fault.
+  const less = meals.setAte(w, 2, "lunch", 0);
+  assert.ok(meals.dayResult(less.days[2], t).kcalOk);
+}
+
+// What to cook: every planned meal counted once, by dish, with the days and the ingredients summed.
+{
+  const w = meals.generateWeek("2026-03-09", targets[3]);
+  const prep = meals.prepList(w);
+  const count = prep.reduce((a, g) => a + g.dishes.reduce((b, x) => b + x.count, 0), 0);
+  const expect = w.days.reduce((a, day) => a + meals.dayItems(day).length, 0);
+  assert.equal(count, expect, "every meal and top-up is in the prep list");
+  const boxes = prep.find((g) => g.id === "lador");
+  assert.equal(boxes.dishes.reduce((a, x) => a + x.count, 0), 14, "lunch and dinner every day");
+  const one = boxes.dishes[0];
+  const ing = one.ingredients[0];
+  const sum = w.days.flatMap((day) => day.meals).filter((m) => meals.MAIN.includes(m.slot) && m.dish === one.key.split("|")[0])
+    .reduce((a, m) => a + (meals.mealInfo(m).ingredients.find((i) => i.name === ing.name && i.unit === ing.unit)?.amount ?? 0), 0);
+  assert.ok(Math.abs(sum - ing.amount) < 0.01, "ingredients summed over the days");
+  // Eaten meals and later days only: from Thursday, nothing from Monday to Wednesday.
+  const eaten = meals.setAte(w, 3, "frukost", 1);
+  assert.ok(meals.prepList(eaten, 3).every((g) => g.dishes.every((x) => x.days.every((d) => d >= 3))));
+  const before = meals.prepList(w, 3).find((g) => g.id === "frukost").dishes.reduce((a, x) => a + x.count, 0);
+  const after = meals.prepList(eaten, 3).find((g) => g.id === "frukost").dishes.reduce((a, x) => a + x.count, 0);
+  assert.equal(after, before - 1, "an eaten meal needs no cooking");
+}
 meals.applyDishes();
 console.log("ok");

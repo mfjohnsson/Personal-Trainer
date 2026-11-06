@@ -720,6 +720,76 @@ export function balanceOf(week, todayIdx) {
   return { over: Math.max(0, Math.round(left)), take, days, unpaid: unpaid >= ADJUST_STEP ? Math.round(unpaid) : 0 };
 }
 
+// --- How the week went ---
+// A day is judged against its own target: calories pass when not more than KCAL_TOLERANCE over (eating
+// less is not a fault, the week evens it out), protein when at most PROTEIN_TOLERANCE under (more is fine).
+// Meals not marked count as planned, as in balanceOf.
+export function dayResult(day, weekTarget) {
+  const t = dayTotals(day), goal = dayTarget(day, weekTarget);
+  const kcalOk = t.kcal <= goal.kcal * (1 + KCAL_TOLERANCE);
+  const proteinOk = t.protein >= goal.protein - PROTEIN_TOLERANCE;
+  return { kcal: t.kcal, protein: t.protein, goal, kcalOk, proteinOk, ok: kcalOk && proteinOk };
+}
+
+// The week is passed when its calories stay within the weekly budget (the daily target times seven, plus
+// WEEK_KCAL_TOLERANCE) and the protein averages at least the target minus PROTEIN_TOLERANCE a day. Days
+// not done yet count as planned, so before Sunday it says whether the week holds if the plan is followed.
+// `todayIdx` 7 or more = the whole week is done. Returns the totals, per-day results (with `done`) and
+// `over` (every day done).
+export const WEEK_KCAL_TOLERANCE = 0.03;
+export function weekResult(week, todayIdx) {
+  const done = (d) => d < todayIdx || dayOver(week.days[d]);
+  const days = week.days.map((day, d) => ({ ...dayResult(day, week.target), done: done(d) }));
+  const kcal = days.reduce((a, x) => a + x.kcal, 0);
+  const budget = week.target.kcal * 7;
+  const protein = Math.round(days.reduce((a, x) => a + x.protein, 0) / 7);
+  const kcalOk = kcal <= budget * (1 + WEEK_KCAL_TOLERANCE);
+  const proteinOk = protein >= week.target.protein - PROTEIN_TOLERANCE;
+  return {
+    kcal, budget, protein, kcalOk, proteinOk, ok: kcalOk && proteinOk, days,
+    proteinDays: days.filter((x) => x.proteinOk).length, over: days.every((x) => x.done),
+  };
+}
+
+// What to cook for days `from`..6: each dish once, with how many times it is eaten, on which days and the
+// ingredients summed (as in the shopping list). Grouped as lunch and dinner (food boxes), breakfast and
+// snacks (the top-up included). Meals already eaten or something else are left out.
+// Returns [{ id, label, dishes: [{ key, name, count, days: [d], ingredients: [{ name, amount, unit }] }] }].
+export const PREP_GROUPS = [
+  { id: "lador", label: "Lunch och middag", slots: MAIN },
+  { id: "frukost", label: "Frukost", slots: ["frukost"] },
+  { id: "mellanmal", label: "Mellanmål", slots: ["mellanmal"] },
+];
+export function prepList(week, from = 0) {
+  const groups = PREP_GROUPS.map((g) => ({ ...g, map: new Map() }));
+  week.days.forEach((day, d) => {
+    if (d < from) return;
+    for (const m of dayItems(day)) {
+      if (m.custom || isLogged(m) || !dishOf(m.dish)) continue;
+      const info = mealInfo(m);
+      const g = groups.find((x) => x.slots.includes(m.slot));
+      const key = `${m.dish}|${info.water ? "w" : ""}`;
+      const cur = g.map.get(key) ?? { key, name: info.name, count: 0, days: [], ing: new Map() };
+      cur.count++;
+      if (!cur.days.includes(d)) cur.days.push(d);
+      for (const i of info.ingredients) {
+        if (/^vatten$/i.test(i.name)) continue; // nothing to cook or buy
+        const k = `${i.name.toLowerCase()}|${i.unit}`;
+        const x = cur.ing.get(k) ?? { name: i.name, unit: i.unit, amount: 0 };
+        x.amount = Math.round((x.amount + i.amount) * 10) / 10;
+        cur.ing.set(k, x);
+      }
+      g.map.set(key, cur);
+    }
+  });
+  return groups.map(({ id, label, map }) => ({
+    id, label,
+    dishes: [...map.values()]
+      .sort((a, b) => b.count - a.count || a.days[0] - b.days[0])
+      .map(({ ing, ...x }) => ({ ...x, ingredients: [...ing.values()] })),
+  })).filter((g) => g.dishes.length);
+}
+
 // The amount of a planned meal set by you, as a share of the dish's own portion (1 = as in the recipe).
 // The meal keeps it and the other meals not yet eaten are fitted around it. `portion` null hands the
 // amount back to the app. Null for an unknown day or slot, an eaten or off-plan meal, or an amount
