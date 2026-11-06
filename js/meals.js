@@ -203,14 +203,40 @@ export function categoryOf(name) {
 
 // A typical amount for a new ingredient, from its nutrients per 100 g. Only the proportions between
 // the ingredients matter (portions are scaled to the day's target), so this just needs to be sensible.
+// Condiments by the food's first word, which in the database names the food itself ("Äppelcidervinäger
+// ättiksyra 7%", "Svartpeppar"); later words are how it was made ("Ris kokt m. salt"). Matched at the
+// end of the word, where a Swedish compound names the thing ("Honungsmelon" is a melon).
+const CONDIMENT = /^(ättika|ättiksyra)$|(vinäger|soja|sojasås|senap|ketchup|dressing|majonnäs|kryddor|krydda|salt|peppar|buljong|fond|honung|sirap|citronsaft|limesaft|pesto)$/i;
+const isCondiment = (name) => CONDIMENT.test(String(name ?? "").trim().split(/[\s,]+/)[0]);
 export function defaultGrams(food) {
   if (!food) return 100;
-  if (food.protein >= 15) return 150; // meat, fish, cheese
-  if (food.kcal >= 500) return 15; // oil, butter, nuts, nut butter
+  if (isCondiment(food.name)) return 15; // a splash or a spoonful
+  // Energy first: nuts and seeds are high in protein too, but a meat-sized 150 g of them is ~900 kcal.
+  if (food.kcal >= 500) return 15; // oil, butter, nuts, seeds, nut butter
+  if (food.protein >= 15 && food.kcal >= 300) return 30; // hard cheese, protein powder
+  if (food.protein >= 15) return 150; // meat, fish
   if (food.carbs >= 50) return 70; // dry pasta, rice, oats
   if (food.carbs >= 15) return 150; // cooked grains, potatoes
   return 100; // vegetables, fruit, dairy
 }
+
+// The calories a new dish starts at, per meal: an ordinary portion, which the planner then scales to
+// the day's target (BOUNDS).
+export const PORTION_KCAL = { frukost: 400, lunch: 550, middag: 550, mellanmal: 300 };
+
+// Gram amounts the app picks for a dish's ingredients (`list` = food per row, null if unknown): each
+// ingredient's typical amount, then all of them scaled together so the dish is an ordinary portion for
+// `slot`. The scaling is held within half to double, so a plain vegetable dish doesn't become a kilo.
+export function suggestGrams(list, slot) {
+  const base = list.map(defaultGrams);
+  const kcal = base.reduce((a, g, i) => a + ((list[i]?.kcal ?? 0) * g) / 100, 0);
+  const k = kcal > 0 ? Math.min(2, Math.max(0.5, (PORTION_KCAL[slot] ?? 500) / kcal)) : 1;
+  return base.map((g) => Math.max(5, Math.round((g * k) / 5) * 5));
+}
+
+// The amounts the app put in before defaultGrams knew about nuts, seeds and condiments. An own dish saved
+// back then whose amounts are all still these was never set by you, so its amounts can be picked again.
+export const legacyGrams = (f) => (!f ? 100 : f.protein >= 15 ? 150 : f.kcal >= 500 ? 15 : f.carbs >= 50 ? 70 : f.carbs >= 15 ? 150 : 100);
 
 const round = Math.round;
 // raw = { name, meals?, ingredients: [[name, amount, unit, category, foodNumber?]], kcal, protein, fat, carbs }
@@ -231,6 +257,7 @@ export function validateDish(raw, slot) {
     ingredients: ingredients.map(([n, a, u, cat, nr]) => [n, a, u, cat ?? categoryOf(n), ...(nr ? [nr] : [])]),
   };
   if (isMain(slot)) values.meals = mealsOf(slot, raw.meals);
+  values.auto = raw.auto === true; // true: the app picked the amounts (suggestGrams); false: you did
   return { values, errors };
 }
 

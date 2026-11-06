@@ -1,4 +1,4 @@
-const CACHE = "traningskost-shell-v44";
+const CACHE = "traningskost-shell-v45";
 const SHELL = [
   "./",
   "index.html",

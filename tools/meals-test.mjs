@@ -452,6 +452,7 @@ assert.equal(meals.categoryOf("Kyckling bröstfilé rå"), "Kött och fisk");
 assert.equal(meals.categoryOf("Potatis kokt"), "Frukt och grönt");
 assert.equal(meals.defaultGrams({ kcal: 110, protein: 23, fat: 1, carbs: 0 }), 150);
 assert.equal(meals.defaultGrams({ kcal: 350, protein: 12, fat: 2, carbs: 70 }), 70);
+assert.equal(meals.defaultGrams({ kcal: 580, protein: 30, fat: 49, carbs: 5 }), 15); // pumpkin seeds: not a meat portion
 
 const own = { slot: "lunch", name: "Egen <b>lunch</b>", kcal: 600, protein: 45, fat: 10, carbs: 40, ingredients: [["Torsk", 200, "g", "Kött och fisk"]] };
 meals.applyDishes({ items: { "egen-1": own, "egen-2": { ...own, meals: ["lunch"] }, "lunch-lax": { ...own, name: "Ny lax", kcal: 800 } }, visible: { "lunch-kyckling": false, "lunch-kalkon": true } });
@@ -626,3 +627,34 @@ meals.applyDishes();
 }
 meals.applyDishes();
 console.log("ok");
+
+// The app's amounts for a dish: typical per ingredient, then the whole dish an ordinary portion.
+{
+  const f = (name, kcal, protein, fat, carbs) => ({ name, kcal, protein, fat, carbs });
+  const salad = [f("Tonfisk i vatten konserv. avrunnen", 116, 26, 1, 0), f("Gurka", 12, 1, 0, 2), f("Tomat", 20, 1, 0, 3),
+    f("Spenat färsk", 23, 3, 0, 1), f("Ägg rått", 140, 12, 10, 0), f("Pumpafrö", 580, 30, 49, 5), f("Solrosfrö", 600, 21, 51, 12),
+    f("Olivolja", 884, 0, 100, 0), f("Äppelcidervinäger ättiksyra 7%", 20, 0, 0, 1)];
+  const grams = meals.suggestGrams(salad, "middag");
+  const kcal = grams.reduce((a, g, i) => a + (salad[i].kcal * g) / 100, 0);
+  assert.ok(kcal > 450 && kcal < 650, `salad ${Math.round(kcal)} kcal`);
+  assert.ok(grams[5] <= 20 && grams[6] <= 20, "seeds a sprinkle, not a meat portion");
+  assert.ok(grams[8] <= 20, "vinegar a splash");
+  assert.ok(grams[0] >= 100, "the fish is the bulk");
+  assert.equal(meals.defaultGrams(f("Proteinpulver", 380, 75, 5, 8)), 30);
+  assert.equal(meals.validateDish({ name: "x", ingredients: [["Torsk", 200, "g"]], kcal: 160, protein: 36, fat: 1, carbs: 0, auto: true }, "lunch").values.auto, true);
+}
+
+// Condiments by name, without catching ordinary foods that mention salt or spice.
+{
+  const g = (name, kcal, protein, carbs) => meals.defaultGrams({ name, kcal, protein, fat: 1, carbs });
+  assert.equal(g("Äppelcidervinäger ättiksyra 7%", 20, 0, 1), 15);
+  assert.equal(g("Svartpeppar", 250, 10, 40), 15);
+  assert.equal(g("Ris kokt m. salt", 130, 3, 28), 150);
+  assert.equal(g("Blandfärs stekt tacokryddad", 250, 20, 2), 150);
+  assert.equal(g("Honungsmelon", 36, 1, 8), 100);
+  assert.equal(g("Pepparrot", 70, 2, 12), 100);
+  assert.equal(g("Rättika", 15, 1, 2), 100);
+  assert.equal(g("Ättika 12%", 20, 0, 0), 15);
+  assert.equal(meals.validateDish({ name: "x", ingredients: [["Torsk", 200, "g"]], kcal: 160, protein: 36, fat: 1, carbs: 0 }, "lunch").values.auto, false);
+  assert.equal(meals.legacyGrams({ kcal: 580, protein: 30, fat: 49, carbs: 5 }), 150); // what the seeds got before
+}

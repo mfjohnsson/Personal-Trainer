@@ -87,6 +87,18 @@ export function mount(el) {
   const ingredientsOf = () => editing.rows.map((r) => [r.name, Number.isFinite(r.amount) ? r.amount : 0, r.unit, meals.categoryOf(r.name), foodOf(r)?.nummer]);
   const totals = () => foods.macrosOf(ingredientsOf());
 
+  // editing.auto: true = the app picks the amounts (meals.suggestGrams) and picks them again when an
+  // ingredient is added or removed; false = you set them. "legacy" = an own dish saved before this was
+  // stored: it counts as the app's when every amount is still what the app put in back then.
+  function refit() {
+    if (editing.auto === "legacy" && foods.isLoaded()) {
+      editing.auto = editing.rows.every((r) => r.unit === "g" && r.amount === meals.legacyGrams(foodOf(r)));
+    }
+    if (editing.auto !== true || !foods.isLoaded()) return;
+    const grams = meals.suggestGrams(editing.rows.map(foodOf), editing.slot);
+    editing.rows.forEach((r, i) => { r.amount = grams[i]; r.unit = "g"; });
+  }
+
   function totalsText() {
     if (!editing.rows.length) return "Lägg till ingredienser så räknas näringsvärdet ut.";
     const m = totals();
@@ -130,7 +142,7 @@ export function mount(el) {
       </div>
       <p class="calc-total" id="totals" aria-live="polite">${totalsText()}</p>
       ${editing.showAmounts
-        ? `<p class="note">Mängderna styr bara hur mycket det är av varje ingrediens jämfört med de andra. Portionen skalas ändå efter dagens mål.</p>
+        ? `<p class="note">Mängderna styr bara hur mycket det är av varje ingrediens jämfört med de andra. Portionen skalas ändå efter dagens mål. Ändrar du en mängd räknar appen inte om mängderna längre.</p>
           <button class="link-btn" type="button" data-act="amounts-hide">Dölj mängder</button>`
         : `<p class="note">Lägg bara till ingredienserna. Appen föreslår mängder och skalar portionen efter dagens mål. Justera bara om rätten ska ha mer eller mindre av något.</p>
           ${editing.rows.length ? `<button class="link-btn" type="button" data-act="amounts-show">Justera mängder</button>` : ""}`}`
@@ -184,7 +196,9 @@ export function mount(el) {
       name: d?.name ?? "",
       meals: d?.meals ?? (meals.MAIN.includes(slot) ? meals.MAIN : [slot]),
       rows: (d?.ingredients ?? []).map(([name, amount, unit, , nummer]) => ({ name, amount, unit, nummer })),
+      auto: !d || d.auto === true || (d.auto === undefined && !meals.isBuiltIn(id) ? "legacy" : false),
     };
+    refit();
     results = [];
     msg = "";
     loadState = foods.isLoaded() ? "ready" : "loading";
@@ -192,7 +206,7 @@ export function mount(el) {
     if (loadState === "loading") {
       const mine = editing;
       foods.load().then(() => { loadState = "ready"; }, () => { loadState = "failed"; })
-        .then(() => { if (editing === mine) render("#d-name"); });
+        .then(() => { if (editing === mine) { refit(); render("#d-name"); } });
     }
   }
 
@@ -205,7 +219,7 @@ export function mount(el) {
     syncName();
     const choice = el.querySelector('input[name="meals"]:checked')?.value;
     const m = totals();
-    const raw = { name: editing.name, ingredients: ingredientsOf(), kcal: m.kcal, protein: m.protein, fat: m.fat, carbs: m.carbs,
+    const raw = { auto: editing.auto === true, name: editing.name, ingredients: ingredientsOf(), kcal: m.kcal, protein: m.protein, fat: m.fat, carbs: m.carbs,
       meals: choice === "both" || !choice ? meals.MAIN : [choice] };
     const { values, errors } = meals.validateDish(raw, editing.slot);
     // An error about the amounts (too small, too big, missing) can only be fixed with them in view.
@@ -246,6 +260,7 @@ export function mount(el) {
     if (t.dataset.amount !== undefined) {
       const v = Number(t.value.trim().replace(",", "."));
       editing.rows[+t.dataset.amount].amount = Number.isFinite(v) && v > 0 ? v : NaN;
+      editing.auto = false;
       updateTotals();
     }
   };
@@ -257,7 +272,7 @@ export function mount(el) {
       return;
     }
     if (!editing) return;
-    if (t.dataset.unit !== undefined) { editing.rows[+t.dataset.unit].unit = t.value; updateTotals(); }
+    if (t.dataset.unit !== undefined) { editing.rows[+t.dataset.unit].unit = t.value; editing.auto = false; updateTotals(); }
     else if (t.name === "meals") editing.meals = t.value === "both" ? meals.MAIN : [t.value];
   };
   // Enter in the search box adds the first hit instead of submitting the form.
@@ -278,11 +293,13 @@ export function mount(el) {
       syncName();
       const food = foods.foodByNumber(Number(btn.dataset.nr));
       editing.rows.push({ name: food.name, amount: meals.defaultGrams(food), unit: "g", nummer: food.nummer });
+      refit();
       results = [];
       render("#food-search");
     } else if (act === "remove") {
       syncName();
       editing.rows.splice(+btn.dataset.i, 1);
+      refit();
       render("#food-search");
     } else if (act === "cancel") { const back = editing.id; editing = null; msg = ""; render(back && `[data-act="edit"][data-id="${back}"]`); }
     else if (act === "reset") {
