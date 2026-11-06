@@ -96,7 +96,11 @@ export function mount(el) {
     }
     if (editing.auto !== true || !foods.isLoaded()) return;
     const grams = meals.suggestGrams(editing.rows.map(foodOf), editing.slot);
-    editing.rows.forEach((r, i) => { r.amount = grams[i]; r.unit = "g"; });
+    // Eggs and whole fruit in pieces (the same weight per piece as the "st" unit counts with).
+    editing.rows.forEach((r, i) => {
+      const per = foods.pieceGrams(r.name);
+      if (per) { r.amount = Math.max(1, Math.round(grams[i] / per)); r.unit = "st"; } else { r.amount = grams[i]; r.unit = "g"; }
+    });
   }
 
   function totalsText() {

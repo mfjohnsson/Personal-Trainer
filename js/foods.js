@@ -133,6 +133,11 @@ const SLICE_G = [[/bröd/i, 30]];
 const DL_G = [[/proteinpulver/i, 35], [/mjölk|yoghurt|\bfil\b|kvarg/i, 103], [/mjöl|rågsikt/i, 60], [/gryn|müsli/i, 40]];
 const firstMatch = (table, name, fallback) => table.find(([re]) => re.test(name))?.[1] ?? fallback;
 
+// Foods you count rather than weigh, with the weight of one: whole eggs and whole fruit. The first word
+// must be the food itself, so "Äggula", "Äggnudlar" and "Äpplemos" are weighed.
+const COUNTED = [[/^ägg\b/i, 60], [/^banan\b/i, 120], [/^(äpple|päron|apelsin)\b/i, 150]];
+export const pieceGrams = (name) => COUNTED.find(([re]) => re.test(String(name ?? "").trim()))?.[1] ?? null;
+
 export function gramsOf(amount, unit, name) {
   if (unit === "g") return { grams: amount, estimated: false };
   const per = unit === "dl" ? firstMatch(DL_G, name, 100) : unit === "skivor" ? firstMatch(SLICE_G, name, 35) : firstMatch(PIECE_G, name, 100);

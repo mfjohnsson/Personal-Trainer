@@ -91,3 +91,9 @@ for (const f of foods.search("uppskattning", 50).filter((x) => foods.abvOf(x) > 
   assert.ok(Math.abs(calc - f.kcal) <= 3, `${f.name}: ${f.kcal} vs ${calc.toFixed(1)}`);
 }
 console.log(`ok: ${json.foods.length} foods, all built-in dishes match the database`);
+
+// Counted foods: whole eggs and fruit, not egg yolk, egg noodles or apple sauce.
+assert.equal(foods.pieceGrams("Ägg rått"), 60);
+assert.equal(foods.pieceGrams("Banan"), 120);
+assert.equal(foods.pieceGrams("Äpple m. skal"), 150);
+for (const n of ["Äggula rå", "Äggnudlar kokta", "Äpplemos", "Tomat", "Kyckling bröstfilé rå"]) assert.equal(foods.pieceGrams(n), null, n);
