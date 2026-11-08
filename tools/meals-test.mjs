@@ -33,7 +33,7 @@ const count = (list) => list.reduce((a, x) => ({ ...a, [x]: (a[x] ?? 0) + 1 }), 
 }
 
 // --- Weeks hit their targets: three meals, protein first ---
-let worstK = 0, shortP = 0, topups = 0;
+let worstK = 0, shortP = 0, topups = 0, lean = 0, mostP = 0;
 for (const kcal of [1700, 1900, 2100, mart, 2400]) {
   const target = { kcal, protein: P };
   for (const start of ["2026-01-05", "2026-01-12", "2026-01-19", "2026-11-09"]) {
@@ -46,14 +46,38 @@ for (const kcal of [1700, 1900, 2100, mart, 2400]) {
       const t = meals.dayTotals(day);
       worstK = Math.max(worstK, Math.abs(t.kcal - kcal) / kcal);
       shortP = Math.max(shortP, P - t.protein);
-      assert.ok(meals.withinTarget(t, target), `${kcal} ${start} day ${d}: ${t.kcal} kcal ${t.protein} g`);
-      for (const m of day.meals) assert.ok(m.portion <= 2 + 1e-9 && m.side <= 2 + 1e-9, "within bounds");
+      mostP = Math.max(mostP, t.protein);
+      // Lean dishes on a high target: the day may stay short of calories rather than go far over the protein.
+      const short = t.kcal < kcal * (1 - meals.KCAL_TOLERANCE) && t.protein >= P + 20;
+      if (short) lean++;
+      assert.ok(t.kcal >= kcal * 0.8, `${kcal} ${start} day ${d}: never far short (${t.kcal} kcal)`);
+      assert.ok(short || meals.withinTarget(t, target), `${kcal} ${start} day ${d}: ${t.kcal} kcal ${t.protein} g`);
+      for (const m of day.meals) assert.ok(m.portion <= 2 + 1e-9 && m.side <= 2.5 + 1e-9, "within bounds");
       if (day.extra) topups++;
     });
   }
 }
-console.log(`targets ${mart}±: worst kcal error ${(worstK * 100).toFixed(1)} %, most protein short ${shortP} g, days with top-up ${topups} of 140`);
+console.log(`targets ${mart}±: worst kcal error ${(worstK * 100).toFixed(1)} %, most protein short ${shortP} g, days with top-up ${topups} of 140, short lean days ${lean}, most protein ${mostP} g`);
+assert.ok(mostP <= P + 35, "never far over the protein target");
+assert.ok(lean <= 10, "short lean days are rare");
 assert.ok(topups < 40, "a top-up is the exception, not the rule");
+
+// --- Top-ups stay a sensible size: quark as the top-up never 750 g, the protein never far over ---
+{
+  meals.applyDishes({ topup: "snack-kvarg" });
+  for (const kcal of [1500, 1600, 1800, mart]) {
+    for (const start of ["2026-11-02", "2026-11-09", "2026-11-16"]) {
+      const w = meals.generateWeek(start, { kcal, protein: P });
+      for (const day of w.days) {
+        for (const e of meals.extrasInfo(day)) {
+          for (const i of e.ingredients) if (i.unit === "g") assert.ok(i.amount <= 400, `${e.name}: ${i.amount} g ${i.name}`);
+        }
+        assert.ok(meals.dayTotals(day).protein <= P + 35, `protein ${meals.dayTotals(day).protein}`);
+      }
+    }
+  }
+  meals.applyDishes();
+}
 
 // --- The rotation: four lunch/dinner dishes a week ---
 {
@@ -175,10 +199,15 @@ const w = meals.generateWeek("2026-11-09", T);
   const side = dish.lines.findIndex((l) => l.part === "s");
   const tw = meals.tweakIngredient(w, 4, "lunch", side, -1);
   const tm = tw.days[4].meals[1];
-  assert.equal(tm.tweak[side], 0.75);
+  assert.ok(tm.tweak[side] < 1);
   assert.ok(tm.fixed);
   const amt = (week) => meals.mealInfo(week.days[4].meals[1]).ingredients[side].amount;
-  assert.ok(amt(tw) < amt(w), "less of that ingredient");
+  const unit = meals.mealInfo(w.days[4].meals[1]).ingredients[side].unit;
+  assert.equal(unit, "g");
+  assert.ok(amt(w) - amt(tw) > 0 && amt(w) - amt(tw) <= 10, `10 g less: ${amt(w)} → ${amt(tw)}`);
+  assert.equal(amt(tw) % 10, 0, "on a whole 10 g");
+  const up = meals.tweakIngredient(tw, 4, "lunch", side, 1);
+  assert.equal(amt(up), amt(tw) + 10, "10 g more");
   assert.equal(meals.tweakIngredient(w, 4, "lunch", 99, 1), null);
 }
 

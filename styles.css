@@ -428,3 +428,13 @@ details.prep > summary::-webkit-details-marker { display: none; }
 .prep-days { grid-column: 1 / -1; font-size: 0.85rem; color: var(--ink-3); }
 details.prep > .note { margin: 0 0 12px; }
 .backup-note:not(:empty) { margin-top: 8px; }
+
+/* Kost: "Planera veckan" */
+.plan-btn { width: 100%; margin-top: 12px; justify-content: center; }
+.plan-day h3 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 0 0 8px; font-size: 1rem; }
+.plan-day .day-pass { font-size: 0.85rem; font-weight: 500; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.plan-row { display: grid; gap: 2px; margin-top: 8px; }
+.plan-row .pick { width: 100%; }
+.plan-fixed { font-weight: 600; color: var(--ink-2); padding: 8px 0; }
+.plan-done-end { width: 100%; margin-top: 4px; }
+details.card.day { scroll-margin-top: 12px; }

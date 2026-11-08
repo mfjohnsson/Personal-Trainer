@@ -77,6 +77,33 @@ function prepHtml(week, from) {
   </section>`;
 }
 
+// "Planera veckan": every day of the week with its meals as dish pickers. Eaten and past meals as text.
+function planWeekHtml(week, from) {
+  return week.days.map((day, d) => {
+    if (d < from) return "";
+    const t = meals.dayTotals(day);
+    const rows = day.meals.map((m, i) => {
+      const info = meals.mealInfo(m);
+      const label = `<span class="pick-label">${meals.slotLabel(m.slot)}</span>`;
+      if (meals.isLocked(week, d, i) || info.custom || !meals.DISHES[m.slot]) {
+        return `<div class="plan-row">${label}<span class="plan-fixed">${esc(info.name)}${meals.isSkipped(m) ? " (åt inte)" : ""}</span></div>`;
+      }
+      const other = meals.otherMain(day, m.slot);
+      const offered = meals.DISHES[m.slot].filter((o) => o.id !== other);
+      const options = offered.some((o) => o.id === m.dish) ? offered : [...offered, meals.dishOf(m.dish)];
+      return `<div class="plan-row"><label class="pick-label" for="pick-${d}-${m.slot}">${meals.slotLabel(m.slot)}</label>
+        <select class="pick" id="pick-${d}-${m.slot}" data-day="${d}" data-slot="${m.slot}">
+          ${options.map((o) => `<option value="${esc(o.id)}"${o.id === m.dish ? " selected" : ""}>${esc(o.name)}</option>`).join("")}
+        </select></div>`;
+    }).join("");
+    const extras = meals.extrasInfo(day).map((e) => `<div class="plan-row"><span class="pick-label">Påfyllning</span><span class="plan-fixed">${esc(e.name)}</span></div>`).join("");
+    return `<section class="card plan-day">
+      <h3>${plan.DAYS[d]}<span class="day-pass">${t.kcal} kcal · ${t.protein} g</span></h3>
+      ${rows}${extras}
+    </section>`;
+  }).join("");
+}
+
 export function mount(el) {
   const target = mealplan.currentTarget();
   if (!target) {
@@ -102,15 +129,28 @@ export function mount(el) {
   const startOf = () => (isNext() ? nextStart : thisStart);
   const focus = { this: null, next: 0 }; // the day shown first, per week (null = today)
   const tomorrowOpen = new Set(); // which "tomorrow" cards are unfolded, kept while the view lives
+  let planning = false; // "Planera veckan": all days with dish pickers
 
   const segHtml = () => `<div class="seg week-seg" role="group" aria-label="Vilken vecka">
       <button type="button" data-act="week" data-next="0" aria-pressed="${!isNext()}">Den här veckan</button>
       <button type="button" data-act="week" data-next="1" aria-pressed="${isNext()}">Nästa vecka</button>
     </div>`;
-  const linksHtml = `<div class="btn-row">
+  const linksHtml = `<button class="btn-secondary plan-btn" type="button" data-act="plan">Planera veckan</button>
+    <div class="btn-row">
       <a class="btn-secondary" href="#/handla">Inköpslista</a>
       <a class="btn-secondary" href="#/ratter">Rätter</a>
     </div>`;
+
+  function planHtml() {
+    const week = mealplan.weekMeals(startOf(), target);
+    const from = isNext() ? 0 : todayIdx;
+    return `<section class="card">
+        <h2><span class="dot" style="background: var(--c-midja)"></span>Planera ${isNext() ? "nästa vecka" : "veckan"} <span class="count">${rangeText(startOf())}</span></h2>
+        <p class="status-line">Välj rätt för varje måltid. Mängderna räknas om så att dagen når målet.</p>
+        <button class="btn-primary" type="button" data-act="plan-done">Klar</button>
+      </section>${planWeekHtml(week, from)}
+      <button class="btn-primary plan-done-end" type="button" data-act="plan-done">Klar</button>`;
+  }
 
   // A day card. `open`: shown unfolded (the day in focus); otherwise folded with its totals in the summary.
   function dayCard(week, d, { open, isToday = false, label = "", planOnly = false, bal = null, regen = true }) {
@@ -156,12 +196,12 @@ export function mount(el) {
         <p class="status-line">Byt rätter och ändra mängder här, så gäller det när veckan börjar.</p>
         ${linksHtml}
         ${storageErrorHtml.replace(" hidden", autoOk ? " hidden" : "")}
-      </section>${prepHtml(week, 0)}${dayCard(week, shown, { open: true, planOnly: true })}`;
+      </section>${dayCard(week, shown, { open: true, planOnly: true })}${prepHtml(week, 0)}`;
   }
 
   function render() {
     const autoOk = mealplan.autoAdjust(today, target);
-    root.innerHTML = isNext() ? nextWeekHtml(autoOk) : thisWeekHtml(autoOk);
+    root.innerHTML = planning ? planHtml() : isNext() ? nextWeekHtml(autoOk) : thisWeekHtml(autoOk);
   }
 
   root.addEventListener("toggle", (e) => {
@@ -189,7 +229,15 @@ export function mount(el) {
       if (isNext()) focus.next = d; else focus.this = d === todayIdx ? null : d;
       mealui.closePanels();
       render();
-      root.querySelector(`[data-act="goto"][data-day="${d}"]`)?.focus();
+      root.querySelector(`[data-act="goto"][data-day="${d}"]`)?.focus({ preventScroll: true });
+      // Straight to that day's meals.
+      root.querySelector(`details.day[data-day="${d}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } else if (act === "plan" || act === "plan-done") {
+      planning = act === "plan";
+      mealui.closePanels();
+      render();
+      window.scrollTo(0, 0);
+      root.querySelector(planning ? '[data-act="plan-done"]' : '[data-act="plan"]')?.focus({ preventScroll: true });
     }
   });
 

@@ -47,6 +47,10 @@ function customMacros() {
   return t;
 }
 
+// A stored row is only used again if it still makes sense.
+const validRow = (r) => !!r && Number.isInteger(r.nummer) && Number.isFinite(r.amount) && r.amount > 0
+  && (r.unit === "portion" || r.unit === "g" || Number.isFinite(r.unit)) && (r.abv === undefined || Number.isFinite(r.abv));
+
 function newRow(f) {
   if (foods.isDrink(f)) return { nummer: f.nummer, amount: 1, unit: foods.drinkSize(f), abv: foods.abvOf(f) || undefined };
   return { nummer: f.nummer, amount: 1, unit: "portion" };
@@ -85,6 +89,7 @@ function calcHtml() {
   if (foodsState !== "ready") {
     return `<p class="note">${foodsState === "failed" ? "Kunde inte läsa livsmedelsdata. Fyll i kalorierna själv." : "Hämtar livsmedelsdata…"}</p>`;
   }
+  customRows = customRows.filter((r) => foods.foodByNumber(r.nummer));
   return `<div class="ing-list" id="c-rows">${calcRowsHtml()}</div>
     <div class="field"><label for="c-search">Räkna ut från mat (valfritt)</label>
       <input id="c-search" type="search" autocomplete="off" placeholder="Sök, t.ex. hamburgare, pommes, öl">
@@ -92,17 +97,19 @@ function calcHtml() {
     <p class="calc-total" id="c-total" aria-live="polite"></p>`;
 }
 
-function customForm(d, slot) {
+// `prev`: what you entered before (editing it), or null.
+function customForm(d, slot, prev) {
+  const val = (v) => (prev && Number.isFinite(v) ? ` value="${v}"` : "");
   return `<form class="custom-form form" data-day="${d}" data-slot="${slot}" novalidate>
     <div class="field"><label for="c-name">Vad åt du? (valfritt)</label>
-      <input id="c-name" name="name" type="text" autocomplete="off" maxlength="40"></div>
+      <input id="c-name" name="name" type="text" autocomplete="off" maxlength="40"${prev?.name ? ` value="${esc(prev.name)}"` : ""}></div>
     <div id="c-calc">${calcHtml()}</div>
     <div class="field-pair">
       <div class="field"><label for="c-kcal">Kalorier, ungefär</label>
-        <input id="c-kcal" name="kcal" type="text" inputmode="decimal" autocomplete="off" aria-describedby="err-c-kcal">
+        <input id="c-kcal" name="kcal" type="text" inputmode="decimal" autocomplete="off" aria-describedby="err-c-kcal"${val(prev?.kcal)}>
         <p class="field-error" id="err-c-kcal" hidden></p></div>
       <div class="field"><label for="c-protein">Protein (g)</label>
-        <input id="c-protein" name="protein" type="text" inputmode="decimal" autocomplete="off" aria-describedby="err-c-protein">
+        <input id="c-protein" name="protein" type="text" inputmode="decimal" autocomplete="off" aria-describedby="err-c-protein"${val(prev?.protein)}>
         <p class="field-error" id="err-c-protein" hidden></p></div>
     </div>
     <div class="btn-row">
@@ -155,10 +162,13 @@ function mealHtml(week, d, m, i, planOnly) {
   const attrs = `data-day="${d}" data-slot="${m.slot}"`;
   const past = meals.isLocked(week, d, i) && !meals.isLogged(m);
   let body;
-  if (customFor === key) body = customForm(d, m.slot);
+  if (customFor === key) body = customForm(d, m.slot, m.custom ?? null);
   else if (info.custom) {
     body = `<p class="note">Du åt något annat i stället för ${esc(meals.dishOf(m.dish)?.name.toLowerCase() ?? "det planerade")}.</p>
-      <button class="btn-secondary" type="button" data-act="custom-undo" ${attrs}>Ångra</button>`;
+      <div class="meal-actions">
+        <button class="btn-secondary" type="button" data-act="custom-open" ${attrs}>Ändra</button>
+        <button class="btn-secondary" type="button" data-act="custom-undo" ${attrs}>Tillbaka till planen</button>
+      </div>`;
   } else if (meals.isSkipped(m)) {
     body = `<p class="note">Du åt inte ${esc(meals.dishOf(m.dish)?.name.toLowerCase() ?? "det här")}. Resten av dagen tar igen proteinet.</p>
       <button class="btn-secondary" type="button" data-act="skip-undo" ${attrs}>Ångra</button>`;
@@ -360,7 +370,9 @@ export function bindMeals(el, { start, target, rerender, failed }) {
     if (act === "custom-open") {
       customFor = key;
       moreFor = null;
-      customRows = [];
+      // Editing what you entered: the foods you picked come back too.
+      const cur = week().days[+day]?.meals.find((x) => x.slot === slot)?.custom;
+      customRows = Array.isArray(cur?.rows) ? cur.rows.filter(validRow).map((r) => ({ ...r })) : [];
       foodsState = foods.isLoaded() ? "ready" : "loading";
       rerender();
       el.querySelector("#c-name")?.focus();
@@ -390,7 +402,7 @@ export function bindMeals(el, { start, target, rerender, failed }) {
       recalc();
       el.querySelector("#c-search")?.focus();
     }
-    else if (act === "custom-cancel") { customFor = null; rerender(); el.querySelector(`[data-meal="${key}"] > summary`)?.focus(); }
+    else if (act === "custom-cancel") { customFor = null; customRows = []; rerender(); el.querySelector(`[data-meal="${key}"] > summary`)?.focus(); }
     else if (act === "custom-undo") { openMeals.add(key); save(meals.setCustom(week(), +day, slot, null), sel("more")); }
     else if (act === "skip") { openMeals.add(key); moreFor = null; save(meals.setSkip(week(), +day, slot, true), sel("skip-undo")); }
     else if (act === "skip-undo") { openMeals.add(key); save(meals.setSkip(week(), +day, slot, false), sel("skip")); }
@@ -448,6 +460,8 @@ export function bindMeals(el, { start, target, rerender, failed }) {
     const bad = ["kcal", "protein"].find((k) => errors[k]);
     if (bad) { form.querySelector(`#c-${bad}`).focus(); return; }
     const { day, slot } = form.dataset;
+    if (customRows.length) values.rows = customRows.map((r) => ({ nummer: r.nummer, amount: r.amount, unit: r.unit, ...(Number.isFinite(r.abv) ? { abv: r.abv } : {}) }));
+    customRows = [];
     mealplan.tick();
     customFor = null;
     openMeals.add(`${day}:${slot}`);

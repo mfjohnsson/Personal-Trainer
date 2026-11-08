@@ -401,6 +401,7 @@ const PART_MAX = 2.5; // "Mer protein" stops here
 export const MORE_STEP = 0.25;
 export const TWEAK_STEP = 0.25;
 export const TWEAK_MAX = 3;
+const TWEAK_UNIT_STEP = { g: 10, st: 1, skivor: 1, dl: 0.5 };
 
 const variantOf = (m) => { const d = dishOf(m.dish); return m.water && d?.water ? { ...d, ...d.water, lines: d.water.lines } : d; };
 const sideOf = (m) => (finite(m.side) ? m.side : m.portion);
@@ -450,7 +451,9 @@ export function mealInfo(meal) {
 // when the meals can't reach the protein target at a sensible size; `manual` = added by you and always
 // kept; day.extraOff = you removed it. Older weeks: `day.shake` (true or portions) reads as a manual shake.
 const EXTRA_STEP = 0.5;
-const EXTRA_MAX = 3;
+const EXTRA_MAX = 3; // stored weeks may hold up to this
+// The most the planner gives of a top-up: two shakes, or one and a half portions of food (375 g quark).
+const extraMax = (d) => (d.id === SHAKE_ID ? 2 : 1.5);
 const EXTRA_COST = 0.05; // a small price, so a top-up is only used when it clearly helps
 const WATER_COST = 0.05;
 export const topupDish = () => dishOf(topup);
@@ -516,6 +519,9 @@ const roundStep = (v) => Math.round(v / STEP) * STEP;
 // Like solve1, with a weight per scale: minimum of Σ w (x − 1)² with Σ x v = rest, within bounds. A lower
 // weight lets that scale move more.
 const SIDE_WEIGHT = 0.5;
+const PROTEIN_FILL = 0.15; // how much a protein part may grow past the protein's need to make up calories
+const SIDE_FILL = 1.25; // sides may grow this much past their usual most to make up calories
+const PROTEIN_OVER_MAX = 30; // g over the protein target the planner goes at most to make up calories
 function solveW(x, vals, w, rest, bounds) {
   const idx = x.map((_, i) => i);
   const pinned = new Set(idx.filter((i) => bounds[i][0] === bounds[i][1]));
@@ -540,6 +546,9 @@ function solveW(x, vals, w, rest, bounds) {
   }
 }
 
+// The sides' bounds when making up calories: a little past the usual most, unless the meal says not to.
+const bFill = (it) => (it.b[0] === it.b[1] || it.noFill ? it.b : [it.b[0], it.b[1] * SIDE_FILL]);
+
 function fitDay(items, target, fixed = { kcal: 0, protein: 0 }) {
   const n = items.length, idx = items.map((_, i) => i);
   const a = items.map((it) => (it.a[0] === it.a[1] ? it.a[0] : 1));
@@ -550,20 +559,34 @@ function fitDay(items, target, fixed = { kcal: 0, protein: 0 }) {
     const restK = target.kcal - fixed.kcal - items.reduce((acc, it, i) => acc + a[i] * it.p.kcal, 0);
     solve1(b, idx, items.map((it) => it.s.kcal), restK, items.map((it) => it.b));
   }
-  // Still short of calories (lean dishes, a high target): the whole meal grows, the sides more than the
-  // protein, and the protein parts never below what the protein needs. More protein than the target is
-  // fine; fewer calories than the target is not the plan.
+  // Still short of calories (lean dishes, a high target): the sides grow, the protein parts only a little
+  // past what the protein needs (much more protein than the target is not wanted either), and never below
+  // it. What is still missing then stays missing; the cost says so.
   const kcalNow = () => items.reduce((acc, it, i) => acc + a[i] * it.p.kcal + b[i] * it.s.kcal, 0) + fixed.kcal;
   if (kcalNow() < target.kcal * 0.98) {
     const x = [...a, ...b];
     const vals = [...items.map((it) => it.p.kcal), ...items.map((it) => it.s.kcal)];
     const weights = [...items.map(() => 1), ...items.map(() => SIDE_WEIGHT)];
-    const bounds = [...items.map((it, i) => (it.a[0] === it.a[1] ? it.a : [a[i], Math.max(a[i], it.a[1])])), ...items.map((it) => it.b)];
+    const pFill = (it, i) => [a[i], Math.max(a[i], Math.min(it.a[1], a[i] + PROTEIN_FILL))];
+    const bounds = [...items.map((it, i) => (it.a[0] === it.a[1] ? it.a : pFill(it, i))), ...items.map(bFill)];
     solveW(x, vals, weights, target.kcal - fixed.kcal, bounds);
     for (let i = 0; i < n; i++) { a[i] = x[i]; b[i] = x[n + i]; }
+    // The sides are as big as they go and the day is still well short: the protein parts grow, but only
+    // to just within the calorie tolerance.
+    const least = target.kcal * (1 - KCAL_TOLERANCE * 0.7);
+    if (kcalNow() < least) {
+      const y = [...a];
+      const restK = least - fixed.kcal - items.reduce((acc, it, i) => acc + b[i] * it.s.kcal, 0);
+      solveW(y, items.map((it) => it.p.kcal), items.map(() => 1), restK, items.map((it, i) => (it.a[0] === it.a[1] ? it.a : [a[i], Math.max(a[i], it.a[1])])));
+      // Never past PROTEIN_OVER_MAX over the protein target: then the day stays a little short instead.
+      const prot = (s) => fixed.protein + items.reduce((acc, it, i) => acc + s[i] * it.p.protein + b[i] * it.s.protein, 0);
+      const cap = target.protein + PROTEIN_OVER_MAX, from = prot(a), to = prot(y);
+      const t = to > cap && to > from ? Math.max(0, (cap - from) / (to - from)) : 1;
+      for (let i = 0; i < n; i++) a[i] += t * (y[i] - a[i]);
+    }
   }
   const clampRound = (v, [lo, hi]) => (lo === hi ? lo : Math.min(hi, Math.max(lo, roundStep(v))));
-  for (let i = 0; i < n; i++) { a[i] = clampRound(a[i], items[i].a); b[i] = clampRound(b[i], items[i].b); }
+  for (let i = 0; i < n; i++) { a[i] = clampRound(a[i], items[i].a); b[i] = clampRound(b[i], bFill(items[i])); }
   const own = items.reduce((acc, it, i) => ({ kcal: acc.kcal + a[i] * it.p.kcal + b[i] * it.s.kcal, protein: acc.protein + a[i] * it.p.protein + b[i] * it.s.protein }), { kcal: 0, protein: 0 });
   const totals = { kcal: Math.round(own.kcal + fixed.kcal), protein: Math.round(own.protein + fixed.protein) };
   const missK = Math.max(0, Math.abs(totals.kcal - target.kcal) / target.kcal * 100 - 2);
@@ -600,19 +623,29 @@ function fitPlan(items, target, mode, keepExtra = null) {
     const cost = fit.cost + extraCost;
     if (!best || cost < best.cost) best = { ...fit, cost, extra, extra2 };
   };
+  // The protein never ends up far over the target because of a top-up.
+  const overP = (fit) => fit.totals.protein > target.protein + PROTEIN_OVER_MAX;
+  // You added it: the portion you chose (one, unless set otherwise), only the meals fit around it.
+  const portions = mode === "on" && keepExtra
+    ? [keepExtra.portion]
+    : Array.from({ length: Math.round(extraMax(ex) / EXTRA_STEP) }, (_, k) => (k + 1) * EXTRA_STEP);
   for (const v of variants) {
-    for (let p = EXTRA_STEP; p <= EXTRA_MAX; p += EXTRA_STEP) {
+    for (const p of portions) {
       const fixed = { kcal: v.d.kcal * p, protein: v.d.protein * p };
       const extra = { dish: ex.id, portion: p, ...(v.water ? { water: true } : {}) };
-      // More than one shake a day is a lot to drink: from 1.5 on it costs a little more.
+      // More than one portion a day is a lot: from 1.5 on it costs a little more.
       const many = Math.max(0, p - 1) * 0.3;
       if (tooMuch(fixed.protein)) continue;
-      consider(fitDay(items, target, fixed), extra, null, EXTRA_COST + many + (v.water ? WATER_COST : 0));
+      const fit = fitDay(items, target, fixed);
+      if (mode !== "on" && overP(fit)) continue;
+      consider(fit, extra, null, EXTRA_COST + many + (v.water ? WATER_COST : 0));
       if (ex2 && p <= 1.5) {
-        for (let p2 = EXTRA_STEP; p2 <= 2; p2 += EXTRA_STEP) {
+        for (let p2 = EXTRA_STEP; p2 <= extraMax(ex2); p2 += EXTRA_STEP) {
           const f2 = { kcal: fixed.kcal + ex2.kcal * p2, protein: fixed.protein + ex2.protein * p2 };
           if (tooMuch(f2.protein)) continue;
-          consider(fitDay(items, target, f2), extra, { dish: ex2.id, portion: p2 }, 2 * EXTRA_COST + 0.2 + (v.water ? WATER_COST : 0));
+          const fit2 = fitDay(items, target, f2);
+          if (overP(fit2)) continue;
+          consider(fit2, extra, { dish: ex2.id, portion: p2 }, 2 * EXTRA_COST + 0.2 + (v.water ? WATER_COST : 0));
         }
       }
     }
@@ -639,7 +672,7 @@ function refit(week, d, day) {
     const [blo, bhi] = B_BOUNDS[m.slot] ?? B_BOUNDS.lunch;
     const b = under ? [blo, Math.min(bhi, Math.max(SIDE_NORMAL_MAX, sideOf(m)))] : [blo, bhi];
     const a = finite(m.fixP) ? [m.fixP, m.fixP] : A_BOUNDS[m.slot] ?? A_BOUNDS.lunch;
-    return { p, s, a, b };
+    return { p, s, a, b, ...(under ? { noFill: true } : {}) };
   });
   const { shake: _s, extra: _e, extra2: _e2, ...plain } = day;
   const old = extraOf(day), old2 = extraOf(day, "extra2");
@@ -829,7 +862,7 @@ export function moreProtein(week, d, slot) {
 }
 export const canMoreProtein = (m) => !m.custom && !m.fixed && (finite(m.fixP) ? m.fixP : m.portion) + MORE_STEP <= PART_MAX + 1e-9;
 
-// One ingredient more or less (−/+ in steps of 25 % of its amount). The meal then keeps its amounts and
+// One ingredient more or less (−/+ 10 g, one piece or half a dl; 25 % for other units). The meal then keeps its amounts and
 // the other meals not yet eaten fit around it.
 export function tweakIngredient(week, d, slot, ing, dir) {
   const i = editable(week, d, slot);
@@ -837,8 +870,19 @@ export function tweakIngredient(week, d, slot, ing, dir) {
   const dd = m && !m.custom ? dishOf(m.dish) : null;
   if (!dd || isLocked(week, d, i) || !(ing >= 0 && ing < dd.ingredients.length)) return null;
   const tweak = dd.ingredients.map((_, j) => tweakOf(m, j));
-  const v = Math.round((tweak[ing] + dir * TWEAK_STEP) * 100) / 100;
-  if (v < 0 || v > TWEAK_MAX) return null;
+  const [, base, unit] = dd.ingredients[ing];
+  const scale = dd.lines ? (dd.lines[ing].part === "p" ? m.portion : sideOf(m)) : m.portion;
+  const per = base * scale; // the amount at tweak 1
+  const step = TWEAK_UNIT_STEP[unit];
+  let v;
+  if (step && per > 0) {
+    // To the next whole step: 10 g, one piece, half a dl.
+    const now = mealInfo(m).ingredients[ing].amount; // as shown
+    const next = dir > 0 ? Math.floor(now / step + 1e-6) * step + step : Math.ceil(now / step - 1e-6) * step - step;
+    v = Math.round((Math.max(0, next) / per) * 1e4) / 1e4;
+  } else v = Math.round((tweak[ing] + dir * TWEAK_STEP) * 100) / 100;
+  if (v > TWEAK_MAX) v = TWEAK_MAX;
+  if (v < 0 || v === tweak[ing]) return null;
   tweak[ing] = v;
   const { fixP: _p, ...rest } = m;
   return withMeal(week, d, i, { ...rest, tweak, fixed: true });
