@@ -72,7 +72,18 @@ assert.ok(topups < 40, "a top-up is the exception, not the rule");
   assert.equal(c[roles.B.id], 5);
   assert.equal(c[roles.F.id], 2);
   assert.equal(c[roles.Q.id], 2);
-  assert.equal(new Set(w.days.map((d) => d.meals[0].dish)).size, meals.DISHES.frukost.length, "every breakfast in the week");
+  assert.ok(w.days.every((d) => d.meals[0].dish === "frukost"), "the same breakfast every day");
+  meals.applyDishes({ breakfast: "frukost-kvarg" });
+  assert.ok(meals.generateWeek("2026-11-09", T).days.every((d) => d.meals[0].dish === "frukost-kvarg"), "your everyday breakfast");
+  const picked = meals.changeDish(w, 2, "frukost", "frukost-oats");
+  const re = meals.setBreakfastFrom(picked, 0);
+  assert.equal(re.days[2].meals[0].dish, "frukost-oats", "a breakfast you picked stays");
+  assert.ok(re.days.filter((_, d) => d !== 2).every((d) => d.meals[0].dish === "frukost-kvarg"));
+  meals.applyDishes();
+  // A built-in dish deleted: not listed, not planned, still shown on earlier days.
+  meals.applyDishes({ gone: { "lunch-lax": true } });
+  assert.ok(meals.dishOf("lunch-lax") && !meals.isListed("lunch-lax") && !meals.isVisible("lunch-lax"));
+  meals.applyDishes();
   // Week to week: some dishes stay (cook what you know), some change.
   let starts = ["2026-11-02", "2026-11-09", "2026-11-16", "2026-11-23", "2026-11-30"];
   for (let i = 1; i < starts.length; i++) {

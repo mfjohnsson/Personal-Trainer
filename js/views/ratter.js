@@ -46,6 +46,15 @@ function topupHtml() {
   </div>`;
 }
 
+// The everyday breakfast: planned every day; change it on a day when you want something else.
+function breakfastHtml() {
+  const list = meals.allDishes("frukost").filter((d) => meals.isVisible(d.id));
+  if (list.length < 2) return "";
+  return `<div class="topup"><div class="field"><label for="breakfast-pick">Varje dag</label>
+    <select class="pick" id="breakfast-pick">${list.map((d) => `<option value="${esc(d.id)}"${d.id === meals.breakfastId() ? " selected" : ""}>${esc(d.name)}</option>`).join("")}</select></div>
+    <p class="note">Vill du ha något annat en dag, byt frukosten på den dagen.</p></div>`;
+}
+
 let tab = "huvudratt"; // the open tab, kept while the app runs
 
 function listHtml(msg, undo) {
@@ -62,6 +71,7 @@ function listHtml(msg, undo) {
     <section class="card">
       <h2><span class="dot" style="background: var(--c-midja)"></span>${g.id === "mellanmal" ? "Proteinpåfyllning" : "Gillar"}</h2>
       ${g.id === "mellanmal" ? topupHtml() : ""}
+      ${g.id === "frukost" ? breakfastHtml() : ""}
       ${on.map(rowHtml).join("") || `<p class="empty">Inga rätter här.</p>`}
       <button class="btn-secondary add-dish" type="button" data-act="add" data-group="${g.id}">Lägg till rätt</button>
     </section>
@@ -171,7 +181,7 @@ export function mount(el) {
         <button class="btn-primary" type="submit"${loadState === "ready" ? "" : " disabled"}>Spara</button>
         <button class="btn-secondary" type="button" data-act="cancel">Avbryt</button>
         ${d && isEdited(d.id) ? `<button class="btn-secondary" type="button" data-act="reset">Återställ originalet</button>` : ""}
-        ${d && !meals.isBuiltIn(d.id) ? deleteHtml(d) : ""}
+        ${d ? deleteHtml(d) : ""}
         <p class="field-error" id="form-note" role="alert" hidden></p>
       </form>
     </section></div>`;
@@ -274,6 +284,12 @@ export function mount(el) {
   };
   el.onchange = (e) => {
     const t = e.target;
+    if (t.id === "breakfast-pick") {
+      msg = dishes.setBreakfast(t.value, replace) ? `Varje dag: ${esc(meals.dishOf(t.value).name)}.` : SAVE_ERROR;
+      undo = null;
+      render("#breakfast-pick");
+      return;
+    }
     if (t.dataset.topup) {
       const which = t.dataset.topup;
       msg = dishes.setTopup(t.value, which) ? `${which === "topup" ? "Först" : "Sedan"}: ${t.value === "none" ? "inget" : esc(meals.dishOf(t.value).name)}.` : SAVE_ERROR;

@@ -35,7 +35,11 @@ function commit(next, changed, replace) {
   if (planned) {
     let all = planned;
     if (changed.size) all = Object.fromEntries(Object.entries(all).map(([start, w]) => [start, meals.isWeek(w) && meals.resolves(w) ? meals.refitWeek(w, changed) : w]));
-    if (replace && meals.isWeek(all[replace.start])) all = { ...all, [replace.start]: meals.replaceHidden(all[replace.start], replace.from) };
+    if (replace && meals.isWeek(all[replace.start])) {
+      let w = meals.replaceHidden(all[replace.start], replace.from);
+      if (replace.breakfast) w = meals.setBreakfastFrom(w, replace.from);
+      all = { ...all, [replace.start]: w };
+    }
     if (all !== planned) fields.meals = all;
   }
   const ok = setMany(fields);
@@ -64,6 +68,7 @@ export const offBlock = (id) => {
   const d = meals.dishOf(id);
   if (!d) return "Rätten finns inte.";
   if (id === meals.topupId()) return "Det är den första proteinpåfyllningen. Välj en annan först.";
+  if (id === meals.breakfastId() && meals.DISHES.frukost.length > 1) return "Det är din vardagsfrukost. Välj en annan först.";
   if (meals.isVisible(id) && !d.meals.every((slot) => meals.DISHES[slot].length > meals.minDishes(slot))) {
     return `Minst ${meals.minDishes(d.slot)} rätter behövs här.`;
   }
@@ -86,12 +91,14 @@ export function setVisible(id, show, replace) {
   return commit({ ...cur, visible: { ...cur.visible, [id]: show } }, new Set(), replace);
 }
 
-// Deletes a dish of your own: gone from every list and never planned again. Its data is kept out of
-// sight so days already planned with it still show it (and so Ångra can bring it back).
+// Deletes any dish: gone from every list and never planned again. It is kept out of sight so days
+// already planned with it still show it (and so Ångra can bring it back).
 export function deleteDish(id, replace) {
   const cur = get("dishes") ?? {};
+  if (!meals.isListed(id) || offBlock(id)) return false;
+  if (meals.isBuiltIn(id)) return commit({ ...cur, gone: { ...cur.gone, [id]: true } }, new Set(), replace);
   const item = cur.items?.[id];
-  if (meals.isBuiltIn(id) || !item || offBlock(id)) return false;
+  if (!item) return false;
   const { [id]: _gone, ...items } = cur.items;
   return commit({ ...cur, items, deleted: { ...cur.deleted, [id]: item } }, new Set(), replace);
 }
@@ -99,8 +106,19 @@ export function deleteDish(id, replace) {
 // Undoes deleteDish.
 export function undeleteDish(id) {
   const cur = get("dishes") ?? {};
+  if (cur.gone?.[id]) {
+    const { [id]: _g, ...gone } = cur.gone;
+    return commit({ ...cur, gone }, new Set([id]));
+  }
   const item = cur.deleted?.[id];
   if (!item) return false;
   const { [id]: _gone, ...deleted } = cur.deleted;
   return commit({ ...cur, deleted, items: { ...cur.items, [id]: item } }, new Set([id]));
+}
+
+// The everyday breakfast; the days not changed by you get it from now on.
+export function setBreakfast(id, replace) {
+  if (!meals.fits(meals.dishOf(id), "frukost")) return false;
+  const cur = get("dishes") ?? {};
+  return commit({ ...cur, breakfast: id, visible: { ...cur.visible, [id]: true } }, new Set(), replace && { ...replace, breakfast: true });
 }

@@ -172,6 +172,8 @@ const listed = new Set(); // dishes in the editor (deleted own dishes are not)
 export const SHAKE_ID = "snack-shake";
 let topup = SHAKE_ID; // first protein top-up
 let topup2 = null; // second, used when the first is not enough
+let breakfast = "frukost"; // the everyday breakfast
+export const breakfastId = () => (isVisible(breakfast) ? breakfast : DISHES.frukost[0]?.id);
 export const topupId = () => topup;
 export const topup2Id = () => topup2;
 // A top-up only helps if it brings more protein per kcal than the meals it makes room for.
@@ -195,7 +197,8 @@ function register(slot, d, show, list = true) {
 
 // overlay = { items: { [id]: { slot, name, kcal, protein, fat, carbs, ingredients, meals?, kind? } },
 //   visible: { [id]: boolean }, removed?: { [id]: true } (older data: switched off),
-//   deleted?: { [id]: item } (own dishes you deleted, kept so earlier days still show), topup?, topup2? }.
+//   deleted?: { [id]: item } (own dishes you deleted, kept so earlier days still show), gone?: { [id]: true }
+//   (built-in dishes you deleted), topup?, topup2?, breakfast? (the everyday breakfast) }.
 // An item with a built-in id replaces that dish; any other id is a dish of the user's own.
 const isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
@@ -212,6 +215,8 @@ export function applyDishes(overlay = {}) {
   const visible = isObject(raw.visible) ? raw.visible : {};
   const removed = new Set(Object.entries(isObject(raw.removed) ? raw.removed : {}).filter(([, v]) => v === true).map(([id]) => id));
   const on = (id, fallback) => !removed.has(id) && (typeof visible[id] === "boolean" ? visible[id] : fallback);
+  // Built-in dishes you deleted: kept out of sight so earlier days still show them.
+  const gone = new Set(Object.entries(isObject(raw.gone) ? raw.gone : {}).filter(([, v]) => v === true).map(([id]) => id));
   dishById.clear(); shown.clear(); listed.clear();
   for (const slot of DISH_SLOTS) DISHES[slot].length = 0;
   const builtIn = new Set();
@@ -221,7 +226,7 @@ export function applyDishes(overlay = {}) {
       const { hidden, ...plain } = b;
       // An edited built-in keeps the shipped kind unless you changed it.
       const d = items[b.id] ? { kind: b.kind, ...items[b.id], id: b.id } : plain;
-      register(slot, d, on(b.id, !hidden));
+      register(slot, d, !gone.has(b.id) && on(b.id, !hidden), !gone.has(b.id));
     }
   }
   for (const [id, it] of Object.entries(items)) {
@@ -230,6 +235,7 @@ export function applyDishes(overlay = {}) {
   for (const [id, it] of Object.entries(deleted)) {
     if (!dishById.has(id)) register(it.slot, { ...it, id }, false, false);
   }
+  breakfast = typeof raw.breakfast === "string" ? raw.breakfast : "frukost";
   // Top-ups: any protein-rich top-up dish, also a switched-off one, but not a deleted one. Otherwise the
   // shake (or the first protein-rich one); the second is quark or cottage cheese when there is one.
   const usable = (id) => typeof id === "string" && listed.has(id) && isTopupCandidate(dishById.get(id));
@@ -712,17 +718,15 @@ function mainFor(roles, d, slot, other) {
   return inWeek[0] ?? DISHES[slot].find((x) => x.id !== other) ?? DISHES[slot][0];
 }
 
-const breakfastFor = (start, d, salt) => {
-  const list = DISHES.frukost;
-  const n = list.length;
-  return list[(((d + weekNo(start) * 3 + salt) % n) + n) % n];
-};
+// Breakfast is the same every day: your everyday breakfast (set in Rätter), changed by you on the days
+// you want something else.
+const breakfastFor = () => dishOf(breakfast) && isVisible(breakfast) ? dishOf(breakfast) : DISHES.frukost[0];
 
 // A planned day for day `d` from the week's dishes. Meals of `old` that are eaten or past are kept (an
 // older day's snack too, when it is past), and so are your calorie change and top-up choices.
 function planDay(week, d, roles, salt, old = null) {
   const fresh = {
-    frukost: breakfastFor(week.start, d, salt),
+    frukost: breakfastFor(),
     lunch: mainFor(roles, d, "lunch", null),
   };
   fresh.middag = mainFor(roles, d, "middag", fresh.lunch.id);
@@ -861,7 +865,7 @@ export function changeDish(week, d, slot, dishId) {
   const i = editable(week, d, slot);
   const chosen = dishOf(dishId);
   if (i < 0 || !fits(chosen, slot) || otherMain(week.days[d], slot) === dishId) return null;
-  return withMeal(week, d, i, { slot, dish: dishId, portion: 1, side: 1 });
+  return withMeal(week, d, i, { slot, dish: dishId, portion: 1, side: 1, chosen: true });
 }
 
 // The top-up added (on) or removed (off) by you; the day is re-fitted.
@@ -987,7 +991,7 @@ const validMeal = (m) => isObject(m) && DISH_SLOTS.includes(m.slot) && typeof m.
   && (m.ate === undefined || validShare(m.ate))
   && (m.fixP === undefined || finite(m.fixP))
   && (m.tweak === undefined || (Array.isArray(m.tweak) && m.tweak.every(finite)))
-  && ["water", "manual", "fixed"].every((k) => m[k] === undefined || typeof m[k] === "boolean");
+  && ["water", "manual", "fixed", "chosen"].every((k) => m[k] === undefined || typeof m[k] === "boolean");
 const extraPortion = (p) => finite(p) && p > 0 && p <= EXTRA_MAX && Math.abs(p / EXTRA_STEP - Math.round(p / EXTRA_STEP)) < 1e-9;
 const validExtraObj = (e) => e === undefined || (isObject(e) && typeof e.dish === "string" && extraPortion(e.portion)
   && (e.water === undefined || typeof e.water === "boolean"));
@@ -1038,7 +1042,7 @@ export function replaceHidden(week, from) {
       const other = otherMain(day, m.slot);
       const old = dishOf(m.dish);
       const sameKind = isMain(m.slot) ? DISHES[m.slot].find((x) => x.kind === old?.kind && x.id !== other) : null;
-      const pick = m.slot === "frukost" ? breakfastFor(week.start, d, 0) : sameKind ?? mainFor(roles, d, m.slot, other);
+      const pick = m.slot === "frukost" ? breakfastFor() : sameKind ?? mainFor(roles, d, m.slot, other);
       changed = true;
       return { slot: m.slot, dish: pick.id, portion: 1, side: 1 };
     });
@@ -1048,6 +1052,19 @@ export function replaceHidden(week, from) {
 }
 
 // Calories near the target and protein at least near it (more protein is fine).
+// The everyday breakfast on days `from`..6, except breakfasts you changed, ate or are past.
+export function setBreakfastFrom(week, from) {
+  let next = week;
+  const b = breakfastFor();
+  for (let d = Math.max(0, from); d < 7 && b; d++) {
+    const i = slotIndex(next.days[d], "frukost");
+    const m = next.days[d].meals[i];
+    if (i < 0 || m.chosen || m.custom || isLocked(next, d, i) || m.dish === b.id) continue;
+    next = withMeal(next, d, i, { slot: "frukost", dish: b.id, portion: 1, side: 1 });
+  }
+  return next;
+}
+
 export const withinTarget = (totals, target) =>
   Math.abs(totals.kcal - target.kcal) <= target.kcal * KCAL_TOLERANCE
   && totals.protein >= target.protein - PROTEIN_TOLERANCE;
