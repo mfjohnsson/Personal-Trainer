@@ -1,10 +1,11 @@
-const CACHE = "traningskost-shell-v46";
+const CACHE = "traningskost-shell-v47";
 const SHELL = [
   "./",
   "index.html",
   "styles.css",
   "app.js",
   "js/store.js",
+  "js/clock.js",
   "js/calc.js",
   "js/plan.js",
   "js/meals.js",
@@ -43,9 +44,28 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// On localhost (development) the network wins, so edited files show up on a plain reload without
+// bumping CACHE. Fresh responses refresh the cache, which still serves when the server is down.
+const DEV = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
+  if (DEV) {
+    event.respondWith(
+      fetch(req, { cache: "no-store" })
+        .then((res) => {
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          }
+          return res;
+        })
+        .catch(() => caches.match(req, { ignoreSearch: true })
+          .then((hit) => hit ?? (req.mode === "navigate" ? caches.match("index.html") : Response.error())))
+    );
+    return;
+  }
   event.respondWith(
     caches.match(req, { ignoreSearch: true }).then((hit) => {
       if (hit) return hit;

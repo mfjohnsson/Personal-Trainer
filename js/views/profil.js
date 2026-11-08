@@ -1,7 +1,8 @@
-import { get, set } from "../store.js";
+import { get, set, exportJson, readBackup, restoreBackup } from "../store.js";
 import * as calc from "../calc.js";
 import * as checkin from "../checkin.js";
 import { todayIso } from "./training.js";
+import { now } from "../clock.js";
 
 export const title = "Profil";
 
@@ -13,6 +14,7 @@ const FIELDS = [
   ["waistCm", "Midja vid start (cm)"],
   ["goalKg", "Målvikt (kg)"],
 ];
+const IMPORT_NOTE = "traningskost.importNote";
 const SAVE_ERROR = "Kunde inte spara. Lagringen är full eller blockerad.";
 
 const fmtInput = (v) => (v === undefined || v === null ? "" : String(v).replace(".", ","));
@@ -24,7 +26,7 @@ function tile(label, value, unit) {
 }
 
 function summary(p, target) {
-  const date = calc.goalDate(p).toLocaleDateString("sv-SE", { day: "numeric", month: "short", year: "numeric" });
+  const date = calc.goalDate(p, now()).toLocaleDateString("sv-SE", { day: "numeric", month: "short", year: "numeric" });
   const adjust = checkin.kcalAdjust();
   const left = p.weightKg - p.goalKg;
   return `
@@ -115,6 +117,9 @@ function changeText(entry) {
 export function mount(el) {
   const today = todayIso();
   let note = "", formNote = "";
+  // A finished import reloads the page; the message survives that in sessionStorage.
+  let backupNote = "";
+  try { backupNote = sessionStorage.getItem(IMPORT_NOTE) ?? ""; sessionStorage.removeItem(IMPORT_NOTE); } catch {}
 
   function render(focusSel) {
     const stored = get("profile");
@@ -164,6 +169,16 @@ export function mount(el) {
           <button class="btn-primary" type="submit">Spara</button>
           <p class="note" id="form-note" aria-live="polite">${formNote || (saved ? "" : "Fyll i dina uppgifter för att räkna ut mål.")}</p>
         </form>
+      </details>
+      <details class="card more-card"${backupNote ? " open" : ""}>
+        <summary><h2><span class="dot" style="background: var(--ink-3)"></span>Säkerhetskopia</h2></summary>
+        <p class="note">Spara all data (profil, vägningar, veckor, rätter) som en fil, eller läs in en fil från en annan enhet. Inläsning ersätter allt som finns här.</p>
+        <div class="btn-row">
+          <button type="button" class="btn-secondary" id="export-btn">Exportera</button>
+          <button type="button" class="btn-secondary" id="import-btn">Importera…</button>
+        </div>
+        <input type="file" id="import-file" accept="application/json,.json" hidden>
+        <p class="note backup-note" role="status" aria-live="polite">${backupNote}</p>
       </details></div>`;
     bindChart(el, log);
     if (focusSel) el.querySelector(focusSel)?.focus();
@@ -209,10 +224,48 @@ export function mount(el) {
   el.onclick = (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
-    if (btn.dataset.remove) {
+    if (btn.id === "export-btn") {
+      const url = URL.createObjectURL(new Blob([exportJson()], { type: "application/json" }));
+      const a = Object.assign(document.createElement("a"), { href: url, download: `traningskost-${today}.json` });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      backupNote = `Filen laddas ner som traningskost-${today}.json.`;
+      render("#export-btn");
+    } else if (btn.id === "import-btn") {
+      el.querySelector("#import-file").click();
+    } else if (btn.dataset.remove) {
       note = checkin.removeWeighIn(btn.dataset.remove) ? "Vägningen är borttagen." : SAVE_ERROR;
       render("#w-weight");
     }
+  };
+
+  el.onchange = async (e) => {
+    if (e.target.id !== "import-file") return;
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    let text;
+    try { text = await file.text(); } catch {
+      backupNote = "Kunde inte läsa filen.";
+      render("#import-btn");
+      return;
+    }
+    const backup = readBackup(text);
+    if (!backup.ok) {
+      backupNote = backup.error;
+      render("#import-btn");
+      return;
+    }
+    if (!confirm(`Ersätta all data i appen med ${file.name}? Det som finns här nu går förlorat.`)) return;
+    if (!restoreBackup(backup.data)) {
+      backupNote = SAVE_ERROR;
+      render("#import-btn");
+      return;
+    }
+    try { sessionStorage.setItem(IMPORT_NOTE, `Inläst från ${file.name}.`); } catch {}
+    location.reload(); // every view and cache starts over from the new data
   };
 
   render();

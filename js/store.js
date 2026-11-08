@@ -78,3 +78,38 @@ export function setMany(fields) {
   for (const [k, v] of Object.entries(prev)) if (v === undefined) delete s[k]; else s[k] = v;
   return false;
 }
+
+// --- Backup: the whole state as JSON, and back ---
+
+export const exportJson = () => JSON.stringify(ensure(), null, 1);
+
+// Checks a file from exportJson before anything is replaced: { ok: true, data } or { ok: false, error }
+// with a Swedish message.
+export function readBackup(text) {
+  let data;
+  try { data = JSON.parse(text); } catch { return { ok: false, error: "Filen är inte giltig JSON." }; }
+  const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
+  const shapeOk = isObj(data) && Number.isInteger(data.schemaVersion) && data.schemaVersion >= 0
+    && ["profile", "weeks", "choices", "progress"].every((k) => data[k] === undefined || isObj(data[k]));
+  if (!shapeOk) return { ok: false, error: "Filen ser inte ut som en säkerhetskopia från appen." };
+  if (data.schemaVersion > SCHEMA_VERSION) {
+    return { ok: false, error: "Säkerhetskopian kommer från en nyare version av appen. Uppdatera appen först." };
+  }
+  return { ok: true, data };
+}
+
+// Replaces everything with checked backup data (run through migrate, so older backups still load).
+// The data that was here is kept under KEY + ".fore-import" (the latest import only) as a safety net.
+// Returns false if storage refused; then nothing has changed.
+export function restoreBackup(data) {
+  const prev = ensure();
+  try {
+    localStorage.setItem(KEY + ".fore-import", JSON.stringify(prev));
+  } catch {
+    return false; // no safety copy, no import: storage this full would likely refuse the import too
+  }
+  state = migrate(data);
+  if (persist()) return true;
+  state = prev;
+  return false;
+}

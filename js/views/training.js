@@ -3,11 +3,8 @@
 import { get, set, setMany } from "../store.js";
 import * as plan from "../plan.js";
 
-// ?today=YYYY-MM-DD overrides the date, so moved passes can be tested without changing the phone clock.
-export function todayIso() {
-  const override = new URLSearchParams(location.search).get("today");
-  return plan.parseIso(override) ? override : plan.isoDate(new Date());
-}
+// Today's date; on localhost ?datum= overrides it (see clock.js).
+export { todayIso } from "../clock.js";
 
 const template = () => plan.normTemplate(get("template"));
 

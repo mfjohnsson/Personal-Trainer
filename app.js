@@ -6,6 +6,7 @@ import * as profil from "./js/views/profil.js";
 import * as ratter from "./js/views/ratter.js";
 import * as handla from "./js/views/handla.js";
 import { init as initDishes } from "./js/dishes.js";
+import * as clock from "./js/clock.js";
 
 const routes = { idag, traning: vecka, kost, profil, ratter, handla };
 // Old addresses still lead somewhere sensible.
@@ -39,7 +40,10 @@ function render() {
   if (location.hash !== "#/" + name) history.replaceState(null, "", "#/" + name);
   get(); // load persisted state early so storage problems surface here, not mid-view
   initDishes();
-  weekEl.textContent = "v. " + isoWeek(new Date());
+  weekEl.textContent = "v. " + isoWeek(clock.now());
+  const testText = clock.overrideText();
+  weekEl.classList.toggle("test-mode", !!testText);
+  if (testText) weekEl.textContent += " · " + testText;
   navLinks.forEach((a) => {
     if (a.dataset.route === (PARENT[name] ?? name)) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
