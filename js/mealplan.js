@@ -3,6 +3,13 @@ import { get, set } from "./store.js";
 import * as plan from "./plan.js";
 import * as meals from "./meals.js";
 import * as checkin from "./checkin.js";
+import * as clock from "./clock.js";
+
+// Tells the planner what time it is: meals whose time has passed count as eaten as planned.
+export function tick() {
+  const n = clock.now();
+  meals.setNow(clock.todayIso(), n.getHours() * 60 + n.getMinutes());
+}
 
 const KEEP_WEEKS = 12; // older weeks are dropped so storage stays small
 
@@ -26,10 +33,10 @@ export function nextWeekStart(start) {
 
 const allWeeks = () => (isObject(get("meals")) ? get("meals") : {});
 
-// Last week's result (meals.weekResult), or null when it was never planned. Its dishes must still resolve.
+// Last week's result (meals.weekResult), or null when it was never planned or no longer resolves.
 export function lastWeekResult(start) {
   const prev = allWeeks()[prevWeekStart(start)];
-  if (!meals.isWeek(prev) || !prev.days.every((day) => day.meals.every((m) => m.custom || meals.dishOf(m.dish)))) return null;
+  if (!meals.isWeek(prev) || !meals.resolves(prev)) return null;
   return meals.weekResult(prev, 7);
 }
 
@@ -40,27 +47,19 @@ export function saveWeek(week) {
   return set("meals", Object.fromEntries(keep.map((k) => [k, next[k]])));
 }
 
-// Last week's final snack, so a new Monday doesn't repeat it. Null when last week is not stored.
-export function lastSnackBefore(start) {
-  const prev = allWeeks()[prevWeekStart(start)];
-  return meals.isWeek(prev) ? prev.days.at(-1).meals[2].dish : null;
-}
-
-// The stored week is reused while every dish still resolves. A new target (weigh-in or profile), or a
-// week stored by an older planner, keeps the dishes and re-fits the portions; a new week is built from
-// the dishes on offer.
+// The stored week is reused while every dish still resolves. A new target (weigh-in or profile) keeps the
+// dishes and re-fits the amounts. A week stored by an older planner (four meals) keeps the days that are
+// over and plans the rest again with three meals. A week that can't be read is planned from scratch.
 export function weekMeals(start, target) {
-  const all = allWeeks();
-  const cur = all[start];
-  const resolvable = meals.isWeek(cur) && cur.days.every((day) => day.meals.every((m) => m.custom || meals.dishOf(m.dish)));
-  if (resolvable && cur.v === meals.PLAN_VERSION && cur.target.kcal === target.kcal && cur.target.protein === target.protein) return cur;
-  let week;
-  if (resolvable) week = meals.retarget(cur, target);
-  else {
-    // Last week may never have been opened; then the snack rule simply starts over.
-    week = meals.generateWeek(start, target, lastSnackBefore(start));
-  }
-  saveWeek(week);
+  const cur = allWeeks()[start];
+  const usable = meals.isWeek(cur) && meals.resolves(cur);
+  if (usable && cur.v === meals.PLAN_VERSION && cur.target.kcal === target.kcal && cur.target.protein === target.protein) return cur;
+  const week = !usable ? meals.generateWeek(start, target)
+    : cur.v === meals.PLAN_VERSION ? meals.retarget(cur, target)
+      : meals.migrateWeek(cur, target);
+  // Without the food database (it failed to load) dishes are not split into protein and sides; such a plan
+  // is shown but not stored, so it is made properly once the database is there.
+  if (meals.hasAnalyzer()) saveWeek(week);
   return week;
 }
 

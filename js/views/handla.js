@@ -19,9 +19,9 @@ export function listOf(week, from) {
   const items = new Map();
   for (const day of week.days.slice(from)) {
     for (const m of meals.dayItems(day)) {
-      if (m.custom) continue;
+      if (m.custom || m.ate === 0) continue; // eaten otherwise or skipped
       for (const i of meals.mealInfo(m).ingredients) {
-        if (/^vatten$/i.test(i.name)) continue; // nothing to buy
+        if (/^vatten$/i.test(i.name) || !i.amount) continue; // nothing to buy
         const key = `${i.name.toLowerCase()}|${i.unit}`;
         const cur = items.get(key) ?? { key, name: i.name, unit: i.unit, category: i.category, amount: 0 };
         cur.amount += i.amount;

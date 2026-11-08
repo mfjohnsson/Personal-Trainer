@@ -31,7 +31,7 @@ assert.equal(foods.gramsOf(1, "dl", "Vatten").grams, 100);
 
 // Every preferred food exists, and every built-in ingredient gets a match.
 for (const [name, nr] of Object.entries(foods.PREFERRED)) assert.ok(foods.foodByNumber(nr), `${name} -> ${nr}`);
-for (const { id } of meals.SLOTS) {
+for (const { id } of meals.GROUPS) {
   for (const d of meals.allDishes(id)) {
     if (!meals.isBuiltIn(d.id)) continue;
     const m = foods.macrosOf(meals.baseDish(d.id).ingredients);

@@ -18,11 +18,12 @@ const mealsTag = (d) => (meals.MAIN.includes(d.slot) && d.meals.length === 1 ? (
 
 function rowHtml(d) {
   const shown = meals.isVisible(d.id);
-  const tags = [!meals.isBuiltIn(d.id) && "Egen", isEdited(d.id) && "Ändrad", mealsTag(d)].filter(Boolean);
-  const canToggle = !shown || dishes.canHide(d.id);
+  const kind = meals.MAIN.includes(d.slot) ? meals.KINDS.find((k) => k.id === d.kind)?.label : null;
+  const tags = [kind, !meals.isBuiltIn(d.id) && "Egen", isEdited(d.id) && "Ändrad", mealsTag(d)].filter(Boolean);
+  const block = shown ? dishes.offBlock(d.id) : null;
   return `<div class="dish-row${shown ? "" : " is-off"}">
     <button class="switch" type="button" role="switch" aria-checked="${shown}" data-act="${shown ? "hide" : "show"}" data-id="${esc(d.id)}"
-      aria-label="Använd ${esc(d.name)}"${canToggle ? "" : ` disabled title="Minst två rätter per måltid behövs"`}></button>
+      aria-label="Använd ${esc(d.name)}"${block ? ` disabled title="${esc(block)}"` : ""}></button>
     <div class="dish-main">
       <span class="ex-name">${esc(d.name)}</span>${tags.map((t) => `<span class="badge">${t}</span>`).join("")}
       <p class="note">${d.kcal} kcal · ${d.protein} g protein per portion</p>
@@ -31,51 +32,51 @@ function rowHtml(d) {
   </div>`;
 }
 
-// Which snack fills up protein when the meals alone would get too big. Hidden snacks may be chosen too.
-// Only protein-rich snacks can be chosen: a less rich one barely moves the day's protein.
+// The two top-ups, in order. Only protein-rich dishes can be chosen.
 function topupHtml() {
   const choices = meals.allDishes("mellanmal").filter(meals.isTopupCandidate);
-  const pick = choices.length > 1
-    ? `<label for="topup-pick">Proteinpåfyllning</label>
-      <select class="pick" id="topup-pick">${choices.map((d) => `<option value="${esc(d.id)}"${d.id === meals.topupId() ? " selected" : ""}>${esc(d.name)} (${d.protein} g protein)</option>`).join("")}</select>`
-    : `<p class="pick-label">Proteinpåfyllning</p><p class="ex-name">${esc(meals.topupDish()?.name ?? "")}</p>`;
-  return `<div class="field topup">
-    ${pick}
-    <p class="note">Läggs till de dagar då måltiderna annars inte når proteinmålet, eller bara når det med portioner mer än ${Math.round((meals.NORMAL_MAX - 1) * 100)} % större än normalt. Måltiderna blir då mindre i stället.</p>
-    <p class="note">Bara mellanmål med minst ${meals.TOPUP_MIN_DENSITY} g protein per 100 kcal kan väljas, till exempel shake eller kvarg. Keso med frukt och nötter har för lite för att hjälpa. Lägg till ett eget mellanmål om du vill ha något annat.</p>
+  const opt = (d, id) => `<option value="${esc(d.id)}"${d.id === id ? " selected" : ""}>${esc(d.name)} (${d.protein} g protein)</option>`;
+  const second = choices.filter((d) => d.id !== meals.topupId());
+  return `<div class="topup">
+    <div class="field"><label for="topup-pick">Först</label>
+      <select class="pick" id="topup-pick" data-topup="topup">${choices.map((d) => opt(d, meals.topupId())).join("")}</select></div>
+    ${second.length ? `<div class="field"><label for="topup2-pick">Sedan, om det behövs mer</label>
+      <select class="pick" id="topup2-pick" data-topup="topup2"><option value="none"${meals.topup2Id() ? "" : " selected"}>Inget</option>${second.map((d) => opt(d, meals.topup2Id())).join("")}</select></div>` : ""}
+    <p class="note">Läggs till de dagar måltiderna inte når proteinmålet i en rimlig storlek.</p>
   </div>`;
 }
 
-function listHtml(msg) {
-  const sections = meals.GROUPS.map((g) => `
-    <section class="card">
-      <h2><span class="dot" style="background: var(--c-midja)"></span>${g.label}</h2>
-      ${g.id === "mellanmal" ? topupHtml() : ""}
-      ${meals.allDishes(g.id).map(rowHtml).join("")}
-      <button class="btn-secondary add-dish" type="button" data-act="add" data-group="${g.id}">Lägg till rätt</button>
-    </section>`).join("");
-  const gone = meals.GROUPS.flatMap((g) => meals.allDishes(g.id, { removed: true }));
-  const removedHtml = gone.length ? `
-    <section class="card">
-      <h2><span class="dot" style="background: var(--c-midja)"></span>Borttagna rätter</h2>
-      ${gone.map((d) => `<div class="dish-row is-off">
-        <div class="dish-main"><span class="ex-name">${esc(d.name)}</span>
-          <p class="note">${esc(meals.groupOf(d.slot).label)} · ${d.kcal} kcal · ${d.protein} g protein per portion</p></div>
-        <button class="link-btn" type="button" data-act="restore" data-id="${esc(d.id)}" aria-label="Ta tillbaka ${esc(d.name)}">Ta tillbaka</button>
-      </div>`).join("")}
-    </section>` : "";
+let tab = "huvudratt"; // the open tab, kept while the app runs
+
+function listHtml(msg, undo) {
+  const g = meals.GROUPS.find((x) => x.id === tab);
+  const all = meals.allDishes(g.id);
+  const on = all.filter((d) => meals.isVisible(d.id)), off = all.filter((d) => !meals.isVisible(d.id));
   return `<div class="view">
     <nav class="subnav" aria-label="Relaterat"><a href="#/kost">&larr; Kost</a></nav>
     <section class="card">
       <h2><span class="dot" style="background: var(--c-vikt)"></span>Rätter</h2>
-      <p class="note">Rätter som är påslagna används i veckans förslag och kan väljas när du byter. Stänger du av en rätt byts den ut i resten av veckan.</p>
-      <p class="note" id="list-note" role="status" aria-live="polite">${msg ?? ""}</p>
-    </section>${sections}${removedHtml}</div>`;
+      <div class="seg" role="group" aria-label="Måltid">${meals.GROUPS.map((x) => `<button type="button" data-act="tab" data-tab="${x.id}" aria-pressed="${x.id === tab}">${x.label}</button>`).join("")}</div>
+      <p class="note" id="list-note" role="status" aria-live="polite">${msg ?? ""}${undo ? ` <button class="link-btn" type="button" data-act="undo-delete" data-id="${esc(undo)}">Ångra</button>` : ""}</p>
+    </section>
+    <section class="card">
+      <h2><span class="dot" style="background: var(--c-midja)"></span>${g.id === "mellanmal" ? "Proteinpåfyllning" : "Gillar"}</h2>
+      ${g.id === "mellanmal" ? topupHtml() : ""}
+      ${on.map(rowHtml).join("") || `<p class="empty">Inga rätter här.</p>`}
+      <button class="btn-secondary add-dish" type="button" data-act="add" data-group="${g.id}">Lägg till rätt</button>
+    </section>
+    ${off.length ? `<details class="card more-card">
+      <summary><h2><span class="dot" style="background: var(--ink-3)"></span>Fler rätter <span class="count">${off.length}</span></h2></summary>
+      <p class="note">Används inte i förslagen. Slå på en rätt så kommer den med.</p>
+      ${off.map(rowHtml).join("")}
+    </details>` : ""}
+  </div>`;
 }
 
 export function mount(el) {
   let editing = null; // { id, slot, name, meals, rows: [{ name, amount, unit, nummer }] } while the form is open
   let msg = "";
+  let undo = null; // id of the own dish just deleted, while "Ångra" is offered
   let results = [];
   let loadState = "idle"; // idle | loading | ready | failed
 
@@ -161,31 +162,31 @@ export function mount(el) {
         </div>
         ${isMain ? `<fieldset class="field radios"><legend>Passar till</legend>
           ${MEAL_CHOICES.map(([v, label]) => `<label><input type="radio" name="meals" value="${v}"${v === mealsChoice ? " checked" : ""}> ${label}</label>`).join("")}
-        </fieldset>` : ""}
+        </fieldset>
+        <fieldset class="field radios"><legend>Sort</legend>
+          ${meals.KINDS.map((k) => `<label><input type="radio" name="kind" value="${k.id}"${k.id === (editing.kind ?? meals.guessKind({ name: editing.name, ingredients: editing.rows.map((r) => [r.name]) })) ? " checked" : ""}> ${k.label}</label>`).join("")}
+        </fieldset>
+        <p class="note">Varje vecka planeras två storkok (nötkött och kyckling), en fiskrätt och en snabb rätt.</p>` : ""}
         ${body}
         <button class="btn-primary" type="submit"${loadState === "ready" ? "" : " disabled"}>Spara</button>
         <button class="btn-secondary" type="button" data-act="cancel">Avbryt</button>
         ${d && isEdited(d.id) ? `<button class="btn-secondary" type="button" data-act="reset">Återställ originalet</button>` : ""}
-        ${d ? removeHtml(d) : ""}
+        ${d && !meals.isBuiltIn(d.id) ? deleteHtml(d) : ""}
         <p class="field-error" id="form-note" role="alert" hidden></p>
       </form>
     </section></div>`;
   }
 
-  // "Ta bort rätten", asked twice. Blocked (with the reason) for the top-up snack or a meal with too few dishes.
-  function removeHtml(d) {
-    const block = dishes.removeBlock(d.id);
-    if (block) return `<p class="note">Kan inte tas bort: ${esc(block)}</p>`;
-    if (!editing.confirmRemove) return `<button class="btn-secondary" type="button" data-act="remove-dish">Ta bort rätten</button>`;
-    return `<div class="remove-confirm" role="group" aria-label="Bekräfta borttagning">
-      <p class="note warn">Ta bort ${esc(d.name)}? Den används inte längre och byts ut i resten av veckan. Du kan ta tillbaka den längst ner på sidan Rätter.</p>
-      <button class="btn-primary" type="button" data-act="remove-yes">Ja, ta bort</button>
-      <button class="btn-secondary" type="button" data-act="remove-no">Behåll</button>
-    </div>`;
+  // Deletes an own dish; the list then offers "Ångra". Blocked (with the reason) for the first top-up or a
+  // meal that would be left with too few dishes.
+  function deleteHtml(d) {
+    const block = dishes.offBlock(d.id);
+    if (block) return `<p class="note">Kan inte raderas: ${esc(block)}</p>`;
+    return `<button class="btn-secondary" type="button" data-act="delete-dish">Radera rätten</button>`;
   }
 
   function render(focusSel) {
-    el.innerHTML = editing ? formHtml() : listHtml(msg);
+    el.innerHTML = editing ? formHtml() : listHtml(msg, undo);
     const form = el.querySelector("#dish-form");
     if (form) form.onsubmit = (e) => { e.preventDefault(); submit(); };
     if (!focusSel) window.scrollTo(0, 0);
@@ -199,12 +200,14 @@ export function mount(el) {
       id, slot,
       name: d?.name ?? "",
       meals: d?.meals ?? (meals.MAIN.includes(slot) ? meals.MAIN : [slot]),
+      kind: d?.kind ?? null,
       rows: (d?.ingredients ?? []).map(([name, amount, unit, , nummer]) => ({ name, amount, unit, nummer })),
       auto: !d || d.auto === true || (d.auto === undefined && !meals.isBuiltIn(id) ? "legacy" : false),
     };
     refit();
     results = [];
     msg = "";
+    undo = null;
     loadState = foods.isLoaded() ? "ready" : "loading";
     render();
     if (loadState === "loading") {
@@ -222,9 +225,10 @@ export function mount(el) {
   function submit() {
     syncName();
     const choice = el.querySelector('input[name="meals"]:checked')?.value;
+    const kindChoice = el.querySelector('input[name="kind"]:checked')?.value;
     const m = totals();
     const raw = { auto: editing.auto === true, name: editing.name, ingredients: ingredientsOf(), kcal: m.kcal, protein: m.protein, fat: m.fat, carbs: m.carbs,
-      meals: choice === "both" || !choice ? meals.MAIN : [choice] };
+      meals: choice === "both" || !choice ? meals.MAIN : [choice], kind: kindChoice ?? editing.kind };
     const { values, errors } = meals.validateDish(raw, editing.slot);
     // An error about the amounts (too small, too big, missing) can only be fixed with them in view.
     const amountError = !!errors.ingredients && editing.rows.length > 0 && !errors.name;
@@ -270,14 +274,17 @@ export function mount(el) {
   };
   el.onchange = (e) => {
     const t = e.target;
-    if (t.id === "topup-pick") {
-      msg = dishes.setTopup(t.value) ? `Proteinpåfyllning: ${esc(meals.dishOf(t.value).name)}.` : SAVE_ERROR;
-      render("#topup-pick");
+    if (t.dataset.topup) {
+      const which = t.dataset.topup;
+      msg = dishes.setTopup(t.value, which) ? `${which === "topup" ? "Först" : "Sedan"}: ${t.value === "none" ? "inget" : esc(meals.dishOf(t.value).name)}.` : SAVE_ERROR;
+      undo = null;
+      render(`#${which}-pick`);
       return;
     }
     if (!editing) return;
     if (t.dataset.unit !== undefined) { editing.rows[+t.dataset.unit].unit = t.value; editing.auto = false; updateTotals(); }
     else if (t.name === "meals") editing.meals = t.value === "both" ? meals.MAIN : [t.value];
+    else if (t.name === "kind") editing.kind = t.value;
   };
   // Enter in the search box adds the first hit instead of submitting the form.
   el.onkeydown = (e) => {
@@ -316,25 +323,27 @@ export function mount(el) {
       syncName();
       editing.showAmounts = act === "amounts-show";
       render(editing.showAmounts ? "[data-amount]" : '[data-act="amounts-show"]');
-    } else if (act === "remove-dish" || act === "remove-no") {
-      syncName();
-      editing.confirmRemove = act === "remove-dish";
-      render(act === "remove-dish" ? '[data-act="remove-no"]' : '[data-act="remove-dish"]');
-    } else if (act === "remove-yes") {
-      const name = meals.dishOf(editing.id).name;
-      if (!dishes.removeDish(editing.id, replace)) return fail(SAVE_ERROR);
-      msg = `${esc(name)} är borttagen.`;
+    } else if (act === "delete-dish") {
+      const id = editing.id, name = meals.dishOf(id).name;
+      if (!dishes.deleteDish(id, replace)) return fail(SAVE_ERROR);
+      msg = `${esc(name)} är raderad.`;
+      undo = id;
       editing = null;
-      render(); // back to the top, where the note says what happened
-    } else if (act === "restore") {
-      const name = meals.dishOf(id).name;
-      if (!dishes.restoreDish(id)) { msg = SAVE_ERROR; render(); return; }
-      msg = `${esc(name)} är tillbaka och används igen.`;
-      render(`[data-act="edit"][data-id="${CSS.escape(id)}"]`);
+      render('[data-act="undo-delete"]');
+    } else if (act === "undo-delete") {
+      const ok = dishes.undeleteDish(id);
+      undo = null;
+      msg = ok ? `${esc(meals.dishOf(id).name)} är tillbaka.` : SAVE_ERROR;
+      render(ok ? `[data-act="edit"][data-id="${CSS.escape(id)}"]` : null);
+    } else if (act === "tab") {
+      tab = btn.dataset.tab;
+      msg = ""; undo = null;
+      render(`[data-act="tab"][data-tab="${tab}"]`);
     } else if (act === "hide" || act === "show") {
       const name = meals.dishOf(id).name;
       if (!dishes.setVisible(id, act === "show", replace)) { msg = SAVE_ERROR; render(); return; }
-      msg = act === "show" ? `${esc(name)} används igen.` : `${esc(name)} används inte längre och är utbytt i resten av veckan.`;
+      msg = act === "show" ? `${esc(name)} används nu.` : `${esc(name)} flyttad till Fler rätter och utbytt i resten av veckan.`;
+      undo = null;
       render(`[data-act][data-id="${CSS.escape(id)}"].switch`);
     }
   };

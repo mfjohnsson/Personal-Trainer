@@ -6,6 +6,8 @@ import * as profil from "./js/views/profil.js";
 import * as ratter from "./js/views/ratter.js";
 import * as handla from "./js/views/handla.js";
 import { init as initDishes } from "./js/dishes.js";
+import * as foods from "./js/foods.js";
+import { tick } from "./js/mealplan.js";
 import * as clock from "./js/clock.js";
 
 const routes = { idag, traning: vecka, kost, profil, ratter, handla };
@@ -40,6 +42,8 @@ function render() {
   if (location.hash !== "#/" + name) history.replaceState(null, "", "#/" + name);
   get(); // load persisted state early so storage problems surface here, not mid-view
   initDishes();
+  tick(); // meals whose time has passed count as eaten
+  shownDay = clock.todayIso();
   weekEl.textContent = "v. " + isoWeek(clock.now());
   const testText = clock.overrideText();
   weekEl.classList.toggle("test-mode", !!testText);
@@ -56,8 +60,17 @@ function render() {
 }
 
 window.addEventListener("hashchange", render);
+// Back in the app after a while: the time is checked again, and a new day draws the view again.
+let shownDay = null;
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  tick();
+  if (shownDay && shownDay !== clock.todayIso()) render();
+});
 if (!location.hash) history.replaceState(null, "", "#/" + DEFAULT_ROUTE);
-render();
+// The food database says which ingredients are protein and which are sides; plans are made with it, so
+// the first view waits for it (it is cached and small). Without it the app still works, less precisely.
+foods.load().catch(() => {}).finally(render);
 
 if ("serviceWorker" in navigator) {
   // A new service worker skips waiting and claims the page. Reload once so the new files are used;

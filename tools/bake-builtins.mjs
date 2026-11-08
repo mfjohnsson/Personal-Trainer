@@ -9,7 +9,7 @@ const root = new URL("../", import.meta.url);
 foods.setData(JSON.parse(fs.readFileSync(new URL("data/livsmedel.json", root), "utf8")));
 
 const rows = [];
-for (const { id } of meals.SLOTS) {
+for (const { id } of meals.GROUPS) {
   for (const d of meals.allDishes(id)) {
     if (!meals.isBuiltIn(d.id)) continue;
     const base = meals.baseDish(d.id);

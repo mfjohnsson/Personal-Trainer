@@ -1,13 +1,28 @@
-// The user's changes to the dish catalog: stored edits, own dishes and which dishes are shown.
-// Storage shape: { items: { [id]: { slot, name, kcal, protein, fat, carbs, ingredients, meals? } }, visible: { [id]: boolean },
-//   removed?: { [id]: true }, topup?: id }.
+// The user's changes to the dish catalog: stored edits, own dishes and which dishes are used.
+// Storage shape: { items: { [id]: { slot, name, kcal, protein, fat, carbs, ingredients, meals?, kind? } },
+//   visible: { [id]: boolean }, deleted?: { [id]: item }, topup?: id, topup2?: id }.
+// Older data has `removed: { [id]: true }`; such dishes are simply switched off (see init).
 import { get, setMany } from "./store.js";
 import * as meals from "./meals.js";
-
-
-export const init = () => meals.applyDishes(get("dishes"));
+import * as foods from "./foods.js";
 
 const isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+
+// Applies the stored catalog. With the food database loaded each ingredient is classed as protein or side.
+export function init() {
+  meals.setAnalyzer(foods.isLoaded() ? foods.macrosOf : null);
+  const cur = get("dishes");
+  // "Borttagna" and "avstängda" are one thing now: switched off. Moved once, in memory and storage.
+  if (isObject(cur) && isObject(cur.removed) && Object.keys(cur.removed).length) {
+    const visible = { ...(isObject(cur.visible) ? cur.visible : {}) };
+    for (const [id, v] of Object.entries(cur.removed)) if (v === true) visible[id] = false;
+    const { removed: _r, ...rest } = cur;
+    setMany({ dishes: { ...rest, visible } }); // if refused, the overlay still reads `removed` as off
+    meals.applyDishes(get("dishes"));
+    return;
+  }
+  meals.applyDishes(cur);
+}
 
 // Applies the change, updates planned weeks and stores both in one write. If storing fails the catalog
 // goes back to what it was. `changed` is a set of dish ids whose days are re-fitted; `replace`
@@ -19,7 +34,7 @@ function commit(next, changed, replace) {
   const fields = { dishes: next };
   if (planned) {
     let all = planned;
-    if (changed.size) all = Object.fromEntries(Object.entries(all).map(([start, w]) => [start, meals.isWeek(w) ? meals.refitWeek(w, changed) : w]));
+    if (changed.size) all = Object.fromEntries(Object.entries(all).map(([start, w]) => [start, meals.isWeek(w) && meals.resolves(w) ? meals.refitWeek(w, changed) : w]));
     if (replace && meals.isWeek(all[replace.start])) all = { ...all, [replace.start]: meals.replaceHidden(all[replace.start], replace.from) };
     if (all !== planned) fields.meals = all;
   }
@@ -28,8 +43,7 @@ function commit(next, changed, replace) {
   return ok;
 }
 
-// New dish when `id` is null. Returns the id, or null if it could not be stored. `replace` as in commit:
-// a main dish limited to lunch may leave a dinner that no longer fits.
+// New dish when `id` is null. Returns the id, or null if it could not be stored.
 export function saveDish(id, slot, values, replace) {
   const cur = get("dishes") ?? {};
   const dishId = id ?? `egen-${Date.now().toString(36)}`;
@@ -44,17 +58,26 @@ export function resetDish(id, replace) {
   return commit({ ...cur, items }, new Set([id]), replace);
 }
 
-// A dish can be hidden while every meal it is offered for keeps enough dishes.
-export const canHide = (id) => {
+// A dish can be switched off while every meal it is offered for keeps enough dishes, and it is not the
+// first protein top-up (pick another first).
+export const offBlock = (id) => {
   const d = meals.dishOf(id);
-  return !!d && meals.isVisible(id) && d.meals.every((slot) => meals.DISHES[slot].length > meals.minDishes(slot));
+  if (!d) return "Rätten finns inte.";
+  if (id === meals.topupId()) return "Det är den första proteinpåfyllningen. Välj en annan först.";
+  if (meals.isVisible(id) && !d.meals.every((slot) => meals.DISHES[slot].length > meals.minDishes(slot))) {
+    return `Minst ${meals.minDishes(d.slot)} rätter behövs här.`;
+  }
+  return null;
 };
+export const canHide = (id) => !offBlock(id);
 
-// The snack used as protein top-up (a protein-rich one); every planned day is re-fitted with it.
-export function setTopup(id) {
-  if (!meals.isTopupCandidate(meals.dishOf(id))) return false;
+// The protein top-ups (protein-rich ones); every planned day is re-fitted with them.
+export function setTopup(id, which = "topup") {
+  const none = which === "topup2" && id === "none";
+  if (!none && !meals.isTopupCandidate(meals.dishOf(id))) return false;
+  if (which === "topup2" && id === meals.topupId()) return false;
   const cur = get("dishes") ?? {};
-  return commit({ ...cur, topup: id }, new Set([id]));
+  return commit({ ...cur, [which]: id }, new Set(none ? [] : [id]));
 }
 
 export function setVisible(id, show, replace) {
@@ -63,28 +86,21 @@ export function setVisible(id, show, replace) {
   return commit({ ...cur, visible: { ...cur.visible, [id]: show } }, new Set(), replace);
 }
 
-// Why a dish can't be removed, or null when it can: the top-up snack (pick another first), or a meal
-// that would be left with too few dishes.
-export function removeBlock(id) {
-  const d = meals.dishOf(id);
-  if (!d || meals.isRemoved(id)) return "Rätten finns inte.";
-  if (id === meals.topupId()) return "Rätten är proteinpåfyllning. Välj en annan påfyllning först.";
-  if (meals.isVisible(id) && !canHide(id)) return `Minst ${meals.minDishes(d.slot)} rätter per måltid behövs.`;
-  return null;
+// Deletes a dish of your own: gone from every list and never planned again. Its data is kept out of
+// sight so days already planned with it still show it (and so Ångra can bring it back).
+export function deleteDish(id, replace) {
+  const cur = get("dishes") ?? {};
+  const item = cur.items?.[id];
+  if (meals.isBuiltIn(id) || !item || offBlock(id)) return false;
+  const { [id]: _gone, ...items } = cur.items;
+  return commit({ ...cur, items, deleted: { ...cur.deleted, [id]: item } }, new Set(), replace);
 }
 
-// Removes a dish: gone from the list and never planned again. It is replaced in the rest of this week
-// (`replace` as in commit); days already planned with it keep resolving. Can be brought back.
-export function removeDish(id, replace) {
-  if (removeBlock(id)) return false;
+// Undoes deleteDish.
+export function undeleteDish(id) {
   const cur = get("dishes") ?? {};
-  return commit({ ...cur, removed: { ...cur.removed, [id]: true } }, new Set(), replace);
-}
-
-// Brings a removed dish back, switched on.
-export function restoreDish(id) {
-  if (!meals.isRemoved(id)) return false;
-  const cur = get("dishes") ?? {};
-  const { [id]: _gone, ...removed } = cur.removed ?? {};
-  return commit({ ...cur, removed, visible: { ...cur.visible, [id]: true } }, new Set());
+  const item = cur.deleted?.[id];
+  if (!item) return false;
+  const { [id]: _gone, ...deleted } = cur.deleted;
+  return commit({ ...cur, deleted, items: { ...cur.items, [id]: item } }, new Set([id]));
 }

@@ -80,6 +80,7 @@ export const PREFERRED = {
   "kyckling": 1173, "kycklingbröst": 1173, "kycklingbröstfilé": 1173, "räkor": 1395, "yoghurt": 124, "naturell yoghurt": 124,
   "quinoa": 3518, "ris": 2517, "fullkornsris": 2517, "pasta": 3828, "fullkornspasta": 3828, "havregryn": 702,
   "olivolja": 35, "avokado": 320, "banan": 553,
+  "kvarg": 3243, "knäckebröd": 166, "blåbär": 556, "hallon": 590,
   // Things people eat out.
   "hamburgare": 2511, "hamburgare med bröd": 2511, "pommes": 246, "pommes frites": 246, "coleslaw": 2075,
   "öl": 9000010, "lager": 9000010, "folköl": 1902, "starköl": 1906, "lättöl": 1901, "ipa": 9000011, "apa": 9000011,
