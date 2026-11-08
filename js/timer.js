@@ -16,6 +16,8 @@ export const restSeconds = () => {
 
 let card = null, body = null, status = null, state = "idle", endAt = 0, tick = null, idleLater = null, audio = null;
 
+const FORGOTTEN_MS = 5 * 60 * 1000;
+
 const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 const choiceText = (s) => (s < 120 ? s + " s" : s / 60 + " min");
 const secondsLeft = () => Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
@@ -56,7 +58,9 @@ function draw() {
   const time = state === "running" ? fmt(secondsLeft()) : state === "done" ? "" : fmt(rest);
   const actions = state === "running"
     ? btn("-15", "−15", "btn-secondary", "15 sekunder kortare") + btn("15", "+15", "btn-secondary", "15 sekunder längre") + btn("stop", "Stoppa")
-    : btn("start", state === "done" ? "Starta igen" : "Starta vila", "btn-primary");
+    : state === "done"
+      ? btn("stop", "Stoppa") + btn("start", "Starta igen", "btn-primary")
+      : btn("start", "Starta vila", "btn-primary");
   const choices = state === "idle"
     ? `<div class="seg" role="group" aria-label="Vilotid">${REST_CHOICES.map((s) =>
         `<button type="button" data-rest="set:${s}" aria-pressed="${s === rest}">${choiceText(s)}</button>`).join("")}</div>`
@@ -82,7 +86,8 @@ function update() {
   draw();
   navigator.vibrate?.([300, 150, 300]);
   beep();
-  idleLater = setTimeout(() => { state = "idle"; draw(); }, 6000);
+  // "Vilan är slut" stays until you pick Stoppa or Starta igen; a forgotten timer goes back to idle later.
+  idleLater = setTimeout(() => { state = "idle"; draw(); }, FORGOTTEN_MS);
 }
 
 export function start(seconds = restSeconds()) {
