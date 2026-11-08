@@ -55,11 +55,14 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(req, { cache: "no-store" })
         .then((res) => {
-          if (res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
-          }
-          return res;
+          if (!res.ok) return res;
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          // A plain dev server sends no Cache-Control, so the browser would keep scripts in its own memory
+          // cache across reloads; marked no-store, every reload gets the file just fetched.
+          const headers = new Headers(res.headers);
+          headers.set("Cache-Control", "no-store");
+          return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
         })
         .catch(() => caches.match(req, { ignoreSearch: true })
           .then((hit) => hit ?? (req.mode === "navigate" ? caches.match("index.html") : Response.error())))
