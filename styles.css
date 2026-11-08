@@ -401,6 +401,8 @@ details.day > .pass-btn { width: calc(100% - 32px); }
 .day-chips .st-today { color: var(--c-vikt); background: var(--c-vikt-soft); }
 .day-chips .chip.is-today { border-color: var(--c-vikt); }
 .day-chips .st-ok .chip-day, .day-chips .st-miss .chip-day, .day-chips .st-today .chip-day { color: inherit; }
+.day-chips .chip[aria-pressed="true"] { color: #fff; background: var(--c-vikt); border-color: var(--c-vikt); }
+.day-chips .chip[aria-pressed="true"] .chip-day { color: inherit; }
 .week-result { padding: 12px; margin-bottom: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
 .week-result.is-ok { border-color: var(--success); background: color-mix(in srgb, var(--success) 10%, var(--surface)); }
 .week-result.is-miss { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }

@@ -230,8 +230,6 @@ export function mount(el) {
       mealui.closePanels();
       render();
       root.querySelector(`[data-act="goto"][data-day="${d}"]`)?.focus({ preventScroll: true });
-      // Straight to that day's meals.
-      root.querySelector(`details.day[data-day="${d}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
     } else if (act === "plan" || act === "plan-done") {
       planning = act === "plan";
       mealui.closePanels();
