@@ -96,7 +96,21 @@ function planWeekHtml(week, from) {
           ${options.map((o) => `<option value="${esc(o.id)}"${o.id === m.dish ? " selected" : ""}>${esc(o.name)}</option>`).join("")}
         </select></div>`;
     }).join("");
-    const extras = meals.extrasInfo(day).map((e) => `<div class="plan-row"><span class="pick-label">Påfyllning</span><span class="plan-fixed">${esc(e.name)}</span></div>`).join("");
+    const info = meals.extrasInfo(day);
+    const fixedExtras = () => info.map((e) => `<div class="plan-row"><span class="pick-label">Påfyllning</span><span class="plan-fixed">${esc(e.name)}</span></div>`).join("");
+    let extras;
+    if (meals.dayOver(week, d)) extras = fixedExtras();
+    else {
+      const choice = meals.extraChoice(day);
+      const auto = choice === "auto" && info.length ? `Appen väljer: ${info.map((e) => e.name).join(" + ")}` : "Appen väljer vid behov";
+      const choices = meals.allDishes("mellanmal").filter(meals.isTopupCandidate);
+      if (choice !== "auto" && choice !== "none" && !choices.some((o) => o.id === choice) && meals.dishOf(choice)) choices.push(meals.dishOf(choice));
+      const opt = (v, text) => `<option value="${esc(v)}"${v === choice ? " selected" : ""}>${esc(text)}</option>`;
+      extras = `<div class="plan-row"><label class="pick-label" for="extra-${d}">Påfyllning</label>
+        <select class="pick" id="extra-${d}" data-extra-day="${d}">
+          ${opt("auto", auto)}${opt("none", "Ingen")}${choices.map((o) => opt(o.id, o.name)).join("")}
+        </select></div>${choice === "auto" ? "" : info.filter((e) => e.key === "extra2").map((e) => `<div class="plan-row"><span class="pick-label">Påfyllning 2</span><span class="plan-fixed">${esc(e.name)}</span></div>`).join("")}`;
+    }
     return `<section class="card plan-day">
       <h3>${plan.DAYS[d]}<span class="day-pass">${t.kcal} kcal · ${t.protein} g</span></h3>
       ${rows}${extras}

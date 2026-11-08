@@ -639,7 +639,7 @@ function fitPlan(items, target, mode, keepExtra = null) {
       const fit = fitDay(items, target, fixed);
       if (mode !== "on" && overP(fit)) continue;
       consider(fit, extra, null, EXTRA_COST + many + (v.water ? WATER_COST : 0));
-      if (ex2 && p <= 1.5) {
+      if (ex2 && ex2.id !== ex.id && p <= 1.5) {
         for (let p2 = EXTRA_STEP; p2 <= extraMax(ex2); p2 += EXTRA_STEP) {
           const f2 = { kcal: fixed.kcal + ex2.kcal * p2, protein: fixed.protein + ex2.protein * p2 };
           if (tooMuch(f2.protein)) continue;
@@ -920,6 +920,21 @@ export function setExtra(week, d, on) {
   const next = on ? { ...plain, extra: { dish: topup, portion: 1, manual: true } } : { ...plain, extraOff: true };
   return replaceDay(week, d, refit(week, d, next));
 }
+
+// The day's top-up as planned: "auto" (the app adds one when needed), "none", or a top-up dish you chose
+// (one portion, the meals fit around it; the second top-up may still be added when the protein needs it). Null for an unknown day or dish, or a day already over.
+export function setExtraChoice(week, d, choice) {
+  const day = week.days[d];
+  if (!day || dayOver(week, d)) return null;
+  if (choice !== "auto" && choice !== "none" && !isTopupCandidate(dishOf(choice))) return null;
+  const { shake: _s, extra: _e, extra2: _e2, extraOff: _o, ...plain } = day;
+  const next = choice === "none" ? { ...plain, extraOff: true }
+    : choice === "auto" ? plain : { ...plain, extra: { dish: choice, portion: 1, manual: true } };
+  return replaceDay(week, d, refit(week, d, next));
+}
+
+// The day's top-up choice, as setExtraChoice takes it.
+export const extraChoice = (day) => (day.extraOff ? "none" : extraOf(day)?.manual ? extraOf(day).dish : "auto");
 
 // Calories up (or down) for one day; protein stays. `auto` = set by the app to even out the week.
 export function setAdjust(week, d, kcal, { auto = false } = {}) {

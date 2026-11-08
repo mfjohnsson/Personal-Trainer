@@ -353,6 +353,11 @@ export function bindMeals(el, { start, target, rerender, failed }) {
       recalc();
       return;
     }
+    if (sel instanceof HTMLSelectElement && sel.dataset.extraDay !== undefined) {
+      mealplan.tick();
+      save(meals.setExtraChoice(week(), +sel.dataset.extraDay, sel.value), `#extra-${sel.dataset.extraDay}`);
+      return;
+    }
     if (!(sel instanceof HTMLSelectElement) || sel.dataset.slot === undefined || sel.dataset.day === undefined) return;
     mealplan.tick();
     save(meals.changeDish(week(), +sel.dataset.day, sel.dataset.slot, sel.value), `#pick-${sel.dataset.day}-${sel.dataset.slot}`);

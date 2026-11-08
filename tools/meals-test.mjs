@@ -224,6 +224,24 @@ const w = meals.generateWeek("2026-11-09", T);
   assert.ok(meals.withinTarget(meals.dayTotals(on.days[5]), T), "the meals make room for it");
   const off = meals.setExtra(on, 5, false);
   assert.ok(off.days[5].extraOff && !off.days[5].extra);
+  // Choosing the top-up per day.
+  const quark = meals.allDishes("mellanmal").filter(meals.isTopupCandidate).find((d) => d.id !== meals.topupId());
+  if (quark) {
+    const ch = meals.setExtraChoice(w, 4, quark.id);
+    assert.equal(ch.days[4].extra.dish, quark.id);
+    assert.equal(meals.extraChoice(ch.days[4]), quark.id);
+    assert.ok(!ch.days[4].extra2, "only the one you chose");
+  }
+  {
+    const hi = meals.generateWeek("2026-11-09", { kcal: 1800, protein: 200 });
+    for (let d = 0; d < 7; d++) {
+      const ch = meals.setExtraChoice(hi, d, meals.topup2Id() ?? meals.topupId());
+      assert.ok(!ch.days[d].extra2 || ch.days[d].extra2.dish !== ch.days[d].extra.dish, "never the same top-up twice");
+    }
+  }
+  assert.equal(meals.extraChoice(meals.setExtraChoice(w, 4, "none").days[4]), "none");
+  assert.equal(meals.extraChoice(meals.setExtraChoice(off, 5, "auto").days[5]), "auto");
+  assert.equal(meals.setExtraChoice(w, 4, w.days[4].meals[1].dish), null, "a lunch is no top-up");
   const adj = meals.setAdjust(w, 6, -400);
   assert.ok(meals.withinTarget(meals.dayTotals(adj.days[6]), meals.dayTarget(adj.days[6], T)));
   assert.equal(meals.setAdjust(w, 6, -5000), null);
