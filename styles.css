@@ -333,6 +333,20 @@ details.meal.skipped > summary .meal-kcal, details.meal.skipped > summary .meal-
 details.meal.is-past > summary .meal-name, details.meal.is-past > summary .meal-kcal { color: var(--ink-3); }
 .ing-tweak .pick-label { font-weight: 400; color: var(--ink); }
 .ing-tweak .ate-val { min-width: 5em; font-weight: 600; }
+/* An ingredient's amount: − / typed number + unit / + (✕ for a food you added). */
+.edit-box .ing-tweak { flex-wrap: nowrap; }
+.ing-tweak .pick-label { min-width: 0; overflow-wrap: anywhere; }
+.amt-ctl { display: flex; align-items: center; gap: 4px; flex: none; }
+.amt-ctl .icon-btn { min-width: 40px; }
+.amt { width: 3.6em; min-height: 44px; padding: 4px; font: inherit; font-weight: 650; text-align: center; font-variant-numeric: tabular-nums; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.amt-unit { min-width: 2.6em; font-size: 0.8rem; color: var(--ink-3); }
+.add-food { display: flex; flex-direction: column; gap: 6px; }
+.add-food input[type="search"] { min-height: 44px; padding: 8px 10px; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.pick-row { display: grid; gap: 2px; }
+.day-done-btn { width: 100%; margin-top: 10px; }
+details.day > .day-done-btn { width: calc(100% - 32px); }
+.day-done { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.done-mark { font-weight: 650; color: var(--success); }
 .day-foot { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .day-foot .day-total { flex: 1; margin: 0; padding: 0; border: none; align-self: center; }
 .day-menu { display: contents; }

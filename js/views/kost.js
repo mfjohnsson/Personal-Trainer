@@ -77,7 +77,8 @@ function prepHtml(week, from) {
   </section>`;
 }
 
-// "Planera veckan": every day of the week with its meals as dish pickers. Eaten and past meals as text.
+// "Planera veckan": every day of the week with its meals and its top-up as pickers. Meals you skipped or
+// ate otherwise, and days that are over, as text.
 function planWeekHtml(week, from) {
   return week.days.map((day, d) => {
     if (d < from) return "";
@@ -85,7 +86,7 @@ function planWeekHtml(week, from) {
     const rows = day.meals.map((m, i) => {
       const info = meals.mealInfo(m);
       const label = `<span class="pick-label">${meals.slotLabel(m.slot)}</span>`;
-      if (meals.isLocked(week, d, i) || info.custom || !meals.DISHES[m.slot]) {
+      if (meals.dayOver(week, d) || info.custom || meals.isSkipped(m) || !meals.DISHES[m.slot]) {
         return `<div class="plan-row">${label}<span class="plan-fixed">${esc(info.name)}${meals.isSkipped(m) ? " (åt inte)" : ""}</span></div>`;
       }
       const other = meals.otherMain(day, m.slot);
@@ -97,20 +98,10 @@ function planWeekHtml(week, from) {
         </select></div>`;
     }).join("");
     const info = meals.extrasInfo(day);
-    const fixedExtras = () => info.map((e) => `<div class="plan-row"><span class="pick-label">Påfyllning</span><span class="plan-fixed">${esc(e.name)}</span></div>`).join("");
-    let extras;
-    if (meals.dayOver(week, d)) extras = fixedExtras();
-    else {
-      const choice = meals.extraChoice(day);
-      const auto = choice === "auto" && info.length ? `Appen väljer: ${info.map((e) => e.name).join(" + ")}` : "Appen väljer vid behov";
-      const choices = meals.allDishes("mellanmal").filter(meals.isTopupCandidate);
-      if (choice !== "auto" && choice !== "none" && !choices.some((o) => o.id === choice) && meals.dishOf(choice)) choices.push(meals.dishOf(choice));
-      const opt = (v, text) => `<option value="${esc(v)}"${v === choice ? " selected" : ""}>${esc(text)}</option>`;
-      extras = `<div class="plan-row"><label class="pick-label" for="extra-${d}">Påfyllning</label>
-        <select class="pick" id="extra-${d}" data-extra-day="${d}">
-          ${opt("auto", auto)}${opt("none", "Ingen")}${choices.map((o) => opt(o.id, o.name)).join("")}
-        </select></div>${choice === "auto" ? "" : info.filter((e) => e.key === "extra2").map((e) => `<div class="plan-row"><span class="pick-label">Påfyllning 2</span><span class="plan-fixed">${esc(e.name)}</span></div>`).join("")}`;
-    }
+    const second = meals.extraChoice(day) === "auto" ? "" : info.filter((e) => e.key === "extra2")
+      .map((e) => `<div class="plan-row"><span class="pick-label">Påfyllning 2</span><span class="plan-fixed">${esc(e.name)}</span></div>`).join("");
+    const extras = `<div class="plan-row"><label class="pick-label" for="extra-${d}">Påfyllning</label>
+        ${mealui.extraSelectHtml(week, d)}</div>${second}`;
     return `<section class="card plan-day">
       <h3>${plan.DAYS[d]}<span class="day-pass">${t.kcal} kcal · ${t.protein} g</span></h3>
       ${rows}${extras}
@@ -160,7 +151,7 @@ export function mount(el) {
     const from = isNext() ? 0 : todayIdx;
     return `<section class="card">
         <h2><span class="dot" style="background: var(--c-midja)"></span>Planera ${isNext() ? "nästa vecka" : "veckan"} <span class="count">${rangeText(startOf())}</span></h2>
-        <p class="status-line">Välj rätt för varje måltid. Mängderna räknas om så att dagen når målet.</p>
+        <p class="status-line">Välj rätt och påfyllning för varje dag. Mängderna räknas om så att dagen når målet.</p>
         <button class="btn-primary" type="button" data-act="plan-done">Klar</button>
       </section>${planWeekHtml(week, from)}
       <button class="btn-primary plan-done-end" type="button" data-act="plan-done">Klar</button>`;
@@ -170,11 +161,12 @@ export function mount(el) {
   function dayCard(week, d, { open, isToday = false, label = "", planOnly = false, bal = null, regen = true }) {
     const t = meals.dayTotals(week.days[d]);
     const adj = meals.adjustOf(week.days[d]);
-    const body = mealui.dayHtml(week, d, target, bal, { planOnly, regen });
+    const body = mealui.dayHtml(week, d, target, bal, { planOnly, regen, canFinish: isToday });
     return `<details class="card day${isToday ? " is-today" : ""}" data-day="${d}"${open || tomorrowOpen.has(d) ? " open" : ""}>
       <summary><span class="day-name">${plan.DAYS[d]}${label ? ` <span class="today">${label}</span>` : ""}</span>
         <span class="day-pass">${t.kcal} kcal · ${t.protein} g</span>
-        ${adj ? `<span class="badge">${adj > 0 ? "+" : "−"}${Math.abs(adj)} kcal</span>` : ""}</summary>
+        ${adj ? `<span class="badge">${adj > 0 ? "+" : "−"}${Math.abs(adj)} kcal</span>` : ""}
+        ${meals.isDone(week.days[d]) ? `<span class="badge ok">✓ Klar</span>` : ""}</summary>
       ${body}
     </details>`;
   }

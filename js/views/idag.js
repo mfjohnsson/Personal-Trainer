@@ -35,7 +35,7 @@ export function mount(el) {
     const autoOk = mealplan.autoAdjust(today, target);
     if (!autoOk) requestAnimationFrame(() => root.querySelector(".storage-error")?.removeAttribute("hidden"));
     const w = mealplan.weekMeals(start, target);
-    return mealui.dayHtml(w, todayIdx, target, mealplan.balance(today, target));
+    return mealui.dayHtml(w, todayIdx, target, mealplan.balance(today, target), { canFinish: true });
   }
 
   function render() {

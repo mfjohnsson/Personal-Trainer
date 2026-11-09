@@ -341,9 +341,13 @@ export function validateDish(raw, slot) {
   return { values, errors };
 }
 
-// --- The clock: meals whose time has passed count as eaten as planned ---
-// Breakfast is over at 10, lunch at 14, dinner at 20. Set by the app on every render (setNow); in tests
-// by hand. Without it nothing has passed.
+// --- The clock and the day's "Klar" ---
+// Nothing is locked: you can change any meal's amounts, dish or top-up, also afterwards (only "Mer
+// protein", which lets the app scale, is for meals still ahead). But a meal whose time has passed
+// (breakfast at 10, lunch at 14, dinner at 20) is "pinned": the app no longer changes it by itself when
+// something else in the day changes. A day you marked done (day.done) and a day before today are over:
+// nothing in them is re-fitted any more, a change touches only what you changed. Set by the app on every
+// render (setNow); in tests by hand. Without it nothing has passed.
 const SLOT_END = { frukost: 600, lunch: 840, mellanmal: 960, middag: 1200 };
 let now = null; // { iso, minutes }
 export function setNow(iso, minutes) { now = typeof iso === "string" ? { iso, minutes: finite(minutes) ? minutes : 0 } : null; }
@@ -355,11 +359,14 @@ function isoOf(start, d) {
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
 }
 
-// The meals of day `d` whose time has passed (indices).
+const isPastDay = (start, d) => !!now && !!start && isoOf(start, d) < now.iso;
+
+// The meals of day `d` the app leaves as they are (indices): all of them on a day that is over, else
+// those whose time has passed.
 function passedOf(start, d, day) {
+  if (day.done === true || isPastDay(start, d)) return new Set(day.meals.map((_, i) => i));
   if (!now || !start) return new Set();
   const iso = isoOf(start, d);
-  if (iso < now.iso) return new Set(day.meals.map((_, i) => i));
   if (iso > now.iso) return new Set();
   return new Set(day.meals.map((m, i) => (slotPassed(m.slot, now.minutes) ? i : -1)).filter((i) => i >= 0));
 }
@@ -368,10 +375,11 @@ function passedOf(start, d, day) {
 // have shares of the planned portion in `ate`.
 export const isLogged = (m) => !!m.custom || m.ate !== undefined;
 export const isSkipped = (m) => m.ate === 0 && !m.custom;
-// Eaten or past: no longer planned, kept as it is.
-export const isLocked = (week, d, i) => isLogged(week.days[d].meals[i]) || passedOf(week.start, d, week.days[d]).has(i);
-// Every meal of the day eaten or past: nothing is re-fitted any more.
-export const dayOver = (week, d) => week.days[d].meals.every((_, i) => isLocked(week, d, i));
+// Logged, past or on a day that is over: the app keeps it as it is (you can still change it yourself).
+export const isPinned = (week, d, i) => isLogged(week.days[d].meals[i]) || passedOf(week.start, d, week.days[d]).has(i);
+// Marked done by you, or a day before today: nothing is re-fitted any more.
+export const dayOver = (week, d) => week.days[d].done === true || isPastDay(week.start, d);
+export const isDone = (day) => day?.done === true;
 
 // --- Your own calorie change for one day (day.adjust, kcal) ---
 export const ADJUST_MIN = -1500;
@@ -400,7 +408,7 @@ const BIG_COST = 20;
 const PART_MAX = 2.5; // "Mer protein" stops here
 export const MORE_STEP = 0.25;
 export const TWEAK_STEP = 0.25;
-export const TWEAK_MAX = 3;
+export const TWEAK_MAX = 5;
 const TWEAK_UNIT_STEP = { g: 10, st: 1, skivor: 1, dl: 0.5 };
 
 const variantOf = (m) => { const d = dishOf(m.dish); return m.water && d?.water ? { ...d, ...d.water, lines: d.water.lines } : d; };
@@ -414,6 +422,13 @@ function partsOf(m, d) {
   for (const l of linesFor(m, d)) { if (l.part === "p") p = add(p, l, l.k ?? 1); else s = add(s, l, l.k ?? 1); }
   return { p, s };
 }
+
+// Foods you added to one meal in the day view: meal.add = [{ name, nummer, amount, unit: "g" | "st", gpu
+// (grams per unit), kcal, protein, fat, carbs (per 100 g) }]. They are not scaled: you set the amount.
+export const ADD_MAX = 8;
+const addsOf = (m) => (Array.isArray(m.add) ? m.add : []);
+const addMacros = (a) => { const k = (a.amount * a.gpu) / 100; return { kcal: a.kcal * k, protein: a.protein * k, fat: a.fat * k, carbs: a.carbs * k }; };
+const addsTotal = (m) => addsOf(m).reduce((t, a) => add(t, addMacros(a)), { ...ZERO });
 
 // Scaled numbers for one planned meal: kcal, protein and ingredient amounts.
 export function mealInfo(meal) {
@@ -430,6 +445,12 @@ export function mealInfo(meal) {
   let tot = { ...ZERO };
   if (lines) lines.forEach((l, i) => { tot = add(tot, l, (l.part === "p" ? a : b) * tweakOf(meal, i)); });
   else tot = add(tot, d, a);
+  tot = add(tot, addsTotal(meal), q);
+  const added = addsOf(meal).map((x) => ({
+    name: x.name, unit: x.unit, category: categoryOf(x.name), added: true,
+    part: isProteinFood({ name: x.name, kcal: x.kcal, protein: x.protein }) ? "p" : "s",
+    amount: x.unit === "g" ? Math.round(x.amount * q) : Math.round(x.amount * q * 10) / 10,
+  }));
   return {
     name: d.name,
     ...(water ? { water: true } : {}),
@@ -442,7 +463,7 @@ export function mealInfo(meal) {
           : unit === "dl" ? Math.round(amount * k * 10) / 10
             : Math.max(k > 0 ? 1 : 0, Math.round(amount * k)), // whole pieces: eggs and fruit
       };
-    }),
+    }).concat(added),
   };
 }
 
@@ -681,7 +702,9 @@ function refit(week, d, day) {
     return { ...plain, ...(old ? { extra: old } : {}), ...(old2 ? { extra2: old2 } : {}), meals: day.meals };
   }
   const mode = day.extraOff ? "off" : old?.manual ? "on" : "auto";
-  const fit = fitPlan(items, target, mode, old);
+  // Foods you added are what you said: the rest of the day fits around them.
+  const added = day.meals.reduce((t, m) => (m.custom ? t : add(t, addsTotal(m), m.ate ?? 1)), { ...ZERO });
+  const fit = fitPlan(items, { kcal: target.kcal - added.kcal, protein: target.protein - added.protein }, mode, old);
   const manual = mode === "on" ? { manual: true } : {};
   return {
     ...plain,
@@ -848,7 +871,7 @@ export function setSkip(week, d, slot, on) {
 export function setCustom(week, d, slot, custom) {
   const i = editable(week, d, slot);
   if (i < 0) return null;
-  const { custom: _old, ate: _ate, manual: _m, fixed: _f, fixP: _p, tweak: _t, ...plain } = week.days[d].meals[i];
+  const { custom: _old, ate: _ate, manual: _m, fixed: _f, fixP: _p, tweak: _t, add: _ad, ...plain } = week.days[d].meals[i];
   return withMeal(week, d, i, custom ? { ...plain, portion: 1, side: 1, custom } : { ...plain, portion: 1, side: 1 });
 }
 
@@ -856,36 +879,87 @@ export function setCustom(week, d, slot, custom) {
 export function moreProtein(week, d, slot) {
   const i = editable(week, d, slot);
   const m = i >= 0 ? week.days[d].meals[i] : null;
-  if (!m || isLocked(week, d, i) || m.custom || m.fixed) return null;
+  if (!m || isPinned(week, d, i) || m.custom || m.fixed) return null;
   const fixP = Math.min(PART_MAX, roundStep((finite(m.fixP) ? m.fixP : m.portion) + MORE_STEP));
   return withMeal(week, d, i, { ...m, fixP });
 }
 export const canMoreProtein = (m) => !m.custom && !m.fixed && (finite(m.fixP) ? m.fixP : m.portion) + MORE_STEP <= PART_MAX + 1e-9;
 
-// One ingredient more or less (−/+ 10 g, one piece or half a dl; 25 % for other units). The meal then keeps its amounts and
-// the other meals not yet eaten fit around it.
-export function tweakIngredient(week, d, slot, ing, dir) {
+// The meal at `slot` of day `d` with its dish, when its amounts can be changed (not "Åt något annat").
+function dishMeal(week, d, slot) {
   const i = editable(week, d, slot);
   const m = i >= 0 ? week.days[d].meals[i] : null;
-  const dd = m && !m.custom ? dishOf(m.dish) : null;
-  if (!dd || isLocked(week, d, i) || !(ing >= 0 && ing < dd.ingredients.length)) return null;
-  const tweak = dd.ingredients.map((_, j) => tweakOf(m, j));
-  const [, base, unit] = dd.ingredients[ing];
+  const dd = m && !m.custom && !isSkipped(m) ? dishOf(m.dish) : null;
+  return dd ? { i, m, dd } : null;
+}
+// The amount of ingredient `ing` at your factor 1.
+function amountAtOne(m, dd, ing) {
   const scale = dd.lines ? (dd.lines[ing].part === "p" ? m.portion : sideOf(m)) : m.portion;
-  const per = base * scale; // the amount at tweak 1
-  const step = TWEAK_UNIT_STEP[unit];
-  let v;
-  if (step && per > 0) {
-    // To the next whole step: 10 g, one piece, half a dl.
-    const now = mealInfo(m).ingredients[ing].amount; // as shown
-    const next = dir > 0 ? Math.floor(now / step + 1e-6) * step + step : Math.ceil(now / step - 1e-6) * step - step;
-    v = Math.round((Math.max(0, next) / per) * 1e4) / 1e4;
-  } else v = Math.round((tweak[ing] + dir * TWEAK_STEP) * 100) / 100;
-  if (v > TWEAK_MAX) v = TWEAK_MAX;
-  if (v < 0 || v === tweak[ing]) return null;
+  return dd.ingredients[ing][1] * scale * (m.ate ?? 1);
+}
+
+// One ingredient set to `amount` (in its own unit; 0 = left out). Works on any meal, also one already
+// eaten: the meal then keeps its amounts, and the other meals of the day not yet eaten fit around it.
+export function setAmount(week, d, slot, ing, amount) {
+  const x = dishMeal(week, d, slot);
+  if (!x || !(ing >= 0 && ing < x.dd.ingredients.length) || !(finite(amount) && amount >= 0)) return null;
+  const { i, m, dd } = x;
+  const per = amountAtOne(m, dd, ing);
+  if (!(per > 0)) return null;
+  const tweak = dd.ingredients.map((_, j) => tweakOf(m, j));
+  const v = Math.min(TWEAK_MAX, Math.round((amount / per) * 1e4) / 1e4);
+  if (Math.abs(v - tweak[ing]) < 1e-9) return null;
   tweak[ing] = v;
   const { fixP: _p, ...rest } = m;
   return withMeal(week, d, i, { ...rest, tweak, fixed: true });
+}
+
+// One ingredient more or less: to the next whole step (10 g, one piece, half a dl; 25 % for other units).
+export function tweakIngredient(week, d, slot, ing, dir) {
+  const x = dishMeal(week, d, slot);
+  if (!x || !(ing >= 0 && ing < x.dd.ingredients.length)) return null;
+  const { m, dd } = x;
+  const unit = dd.ingredients[ing][2];
+  const step = TWEAK_UNIT_STEP[unit];
+  const now = mealInfo(m).ingredients[ing].amount; // as shown
+  let next;
+  if (step) next = dir > 0 ? Math.floor(now / step + 1e-6) * step + step : Math.ceil(now / step - 1e-6) * step - step;
+  else next = amountAtOne(m, dd, ing) * (tweakOf(m, ing) + dir * TWEAK_STEP);
+  return setAmount(week, d, slot, ing, Math.max(0, next));
+}
+
+// --- Foods you add to a meal ---
+// `food` = { nummer, name, kcal, protein, fat, carbs } per 100 g; `gpu` grams per piece for foods you count
+// (eggs, bananas), else weighed in grams.
+export const ADD_STEP = { g: 10, st: 1 };
+export function addFood(week, d, slot, food, gpu = null) {
+  const x = dishMeal(week, d, slot);
+  if (!x || !food || addsOf(x.m).length >= ADD_MAX || ![food.kcal, food.protein, food.fat, food.carbs].every(finite)) return null;
+  const counted = finite(gpu) && gpu > 0;
+  const item = {
+    name: food.name, nummer: food.nummer, unit: counted ? "st" : "g", gpu: counted ? gpu : 1,
+    amount: counted ? 1 : Math.max(10, Math.round(defaultGrams(food) / 10) * 10),
+    kcal: food.kcal, protein: food.protein, fat: food.fat, carbs: food.carbs,
+  };
+  return withMeal(week, d, x.i, { ...x.m, add: [...addsOf(x.m), item], fixed: true });
+}
+// An added food's amount; 0 takes it away.
+export function setAddAmount(week, d, slot, j, amount) {
+  const x = dishMeal(week, d, slot);
+  const list = x ? addsOf(x.m) : [];
+  if (!x || !(j >= 0 && j < list.length) || !(finite(amount) && amount >= 0 && amount <= 5000)) return null;
+  const rounded = list[j].unit === "st" ? Math.round(amount * 2) / 2 : Math.round(amount);
+  const next = rounded > 0 ? list.map((a, k) => (k === j ? { ...a, amount: rounded } : a)) : list.filter((_, k) => k !== j);
+  const { add: _a, ...rest } = x.m;
+  return withMeal(week, d, x.i, { ...rest, ...(next.length ? { add: next } : {}), fixed: true });
+}
+export function stepAdd(week, d, slot, j, dir) {
+  const x = dishMeal(week, d, slot);
+  const a = x ? addsOf(x.m)[j] : null;
+  if (!a) return null;
+  const step = ADD_STEP[a.unit] ?? 10;
+  const next = dir > 0 ? Math.floor(a.amount / step + 1e-6) * step + step : Math.ceil(a.amount / step - 1e-6) * step - step;
+  return setAddAmount(week, d, slot, j, Math.max(0, next));
 }
 
 // Hands the meal's amounts back to the app.
@@ -895,7 +969,7 @@ export function resetMeal(week, d, slot) {
   const { fixP: _p, tweak: _t, fixed: _f, manual: _m, ...plain } = week.days[d].meals[i];
   return withMeal(week, d, i, plain);
 }
-export const isTouched = (m) => !m.custom && (finite(m.fixP) || m.fixed || m.manual || Array.isArray(m.tweak));
+export const isTouched = (m) => !m.custom && (finite(m.fixP) || m.fixed || m.manual || Array.isArray(m.tweak) || addsOf(m).length > 0);
 
 // The dish at the day's other main meal (lunch for dinner and the other way round), or null.
 export function otherMain(day, slot) {
@@ -909,7 +983,8 @@ export function changeDish(week, d, slot, dishId) {
   const i = editable(week, d, slot);
   const chosen = dishOf(dishId);
   if (i < 0 || !fits(chosen, slot) || otherMain(week.days[d], slot) === dishId) return null;
-  return withMeal(week, d, i, { slot, dish: dishId, portion: 1, side: 1, chosen: true });
+  const kept = addsOf(week.days[d].meals[i]);
+  return withMeal(week, d, i, { slot, dish: dishId, portion: 1, side: 1, chosen: true, ...(kept.length ? { add: kept, fixed: true } : {}) });
 }
 
 // The top-up added (on) or removed (off) by you; the day is re-fitted.
@@ -923,17 +998,47 @@ export function setExtra(week, d, on) {
 
 // The day's top-up as planned: "auto" (the app adds one when needed), "none", or a top-up dish you chose
 // (one portion, the meals fit around it; the second top-up may still be added when the protein needs it). Null for an unknown day or dish, or a day already over.
+// On a day that is over only the top-up changes: "auto" is not offered there.
 export function setExtraChoice(week, d, choice) {
   const day = week.days[d];
-  if (!day || dayOver(week, d)) return null;
-  if (choice !== "auto" && choice !== "none" && !isTopupCandidate(dishOf(choice))) return null;
-  const { shake: _s, extra: _e, extra2: _e2, extraOff: _o, ...plain } = day;
+  const over = !!day && dayOver(week, d);
+  if (!day || (over && choice === "auto")) return null;
+  if (choice !== "auto" && choice !== "none" && !(dishOf(choice)?.slot === "mellanmal" && isListed(choice))) return null;
+  const { shake: _s, extra: _e, extra2: _e2, extraOff: _o, ...rest } = day;
+  // On a day that is over the second top-up stays, unless you chose none at all.
+  const plain = over && choice !== "none" && extraOf(day, "extra2") ? { ...rest, extra2: extraOf(day, "extra2") } : rest;
+  const cur = extraOf(day);
+  const portion = cur?.dish === choice ? cur.portion : 1;
   const next = choice === "none" ? { ...plain, extraOff: true }
-    : choice === "auto" ? plain : { ...plain, extra: { dish: choice, portion: 1, manual: true } };
-  return replaceDay(week, d, refit(week, d, next));
+    : choice === "auto" ? plain : { ...plain, extra: { dish: choice, portion, manual: true } };
+  return replaceDay(week, d, over ? next : refit(week, d, next));
+}
+
+// The first top-up half a portion more or less (it is then yours: the meals fit around it).
+export function stepExtra(week, d, dir) {
+  const day = week.days[d];
+  const e = day ? extraOf(day) : null;
+  if (!e) return null;
+  const portion = Math.round((e.portion + dir * EXTRA_STEP) / EXTRA_STEP) * EXTRA_STEP;
+  if (portion <= 0 || portion > EXTRA_MAX) return null;
+  const { shake: _s, extraOff: _o, ...plain } = day;
+  const next = { ...plain, extra: { ...e, portion, manual: true } };
+  return replaceDay(week, d, dayOver(week, d) ? next : refit(week, d, next));
+}
+export const EXTRA_PORTION_MAX = EXTRA_MAX;
+
+// The day marked done ("Klar") or opened again. Done: nothing in it is re-fitted any more, and the week's
+// balance counts it. Opened again: the meals not yet past fit the day again.
+export function setDone(week, d, on) {
+  const day = week.days[d];
+  if (!day) return null;
+  const { done: _d, ...plain } = day;
+  if (on) return replaceDay(week, d, { ...plain, done: true });
+  return replaceDay(week, d, refit(week, d, plain));
 }
 
 // The day's top-up choice, as setExtraChoice takes it.
+export const extraPortions = (day) => extraOf(day)?.portion ?? 0;
 export const extraChoice = (day) => (day.extraOff ? "none" : extraOf(day)?.manual ? extraOf(day).dish : "auto");
 
 // Calories up (or down) for one day; protein stays. `auto` = set by the app to even out the week.
@@ -1044,19 +1149,23 @@ export function validateCustom(raw) {
 
 // --- Stored weeks ---
 const validShare = (v) => finite(v) && v >= 0 && v <= 2 && Math.abs(v * 4 - Math.round(v * 4)) < 1e-9;
+const validAdd = (a) => isObject(a) && typeof a.name === "string" && a.name !== "" && (a.unit === "g" || a.unit === "st")
+  && [a.amount, a.gpu, a.kcal, a.protein, a.fat, a.carbs].every(finite) && a.amount > 0 && a.gpu > 0;
 const validMeal = (m) => isObject(m) && DISH_SLOTS.includes(m.slot) && typeof m.dish === "string" && finite(m.portion)
   && (m.side === undefined || finite(m.side))
   && (m.custom === undefined || (isObject(m.custom) && finite(m.custom.kcal) && finite(m.custom.protein)))
   && (m.ate === undefined || validShare(m.ate))
   && (m.fixP === undefined || finite(m.fixP))
   && (m.tweak === undefined || (Array.isArray(m.tweak) && m.tweak.every(finite)))
+  && (m.add === undefined || (Array.isArray(m.add) && m.add.length <= ADD_MAX && m.add.every(validAdd)))
   && ["water", "manual", "fixed", "chosen"].every((k) => m[k] === undefined || typeof m[k] === "boolean");
 const extraPortion = (p) => finite(p) && p > 0 && p <= EXTRA_MAX && Math.abs(p / EXTRA_STEP - Math.round(p / EXTRA_STEP)) < 1e-9;
 const validExtraObj = (e) => e === undefined || (isObject(e) && typeof e.dish === "string" && extraPortion(e.portion)
   && (e.water === undefined || typeof e.water === "boolean"));
 const validExtra = (d) => (d.shake === undefined || d.shake === true || extraPortion(d.shake))
   && validExtraObj(d.extra) && validExtraObj(d.extra2)
-  && (d.extraOff === undefined || typeof d.extraOff === "boolean");
+  && (d.extraOff === undefined || typeof d.extraOff === "boolean")
+  && (d.done === undefined || typeof d.done === "boolean");
 export const isWeek = (w) => isObject(w) && isObject(w.target) && typeof w.start === "string" && Array.isArray(w.days) && w.days.length === 7
   && w.days.every((d) => isObject(d) && validExtra(d) && Array.isArray(d.meals) && d.meals.length >= 1 && d.meals.length <= 5 && d.meals.every(validMeal));
 export const resolves = (week) => week.days.every((day) => day.meals.every((m) => m.custom || dishOf(m.dish))
@@ -1072,7 +1181,7 @@ export function refitWeek(week, ids) {
     // Your per-ingredient amounts follow the ingredient list, which may have changed: they are let go.
     const cur = next.days[d];
     const meals = cur.meals.map((m, i) => {
-      if (!ids.has(m.dish) || !Array.isArray(m.tweak) || isLocked(next, d, i)) return m;
+      if (!ids.has(m.dish) || !Array.isArray(m.tweak) || isPinned(next, d, i)) return m;
       const { tweak: _t, fixed: _f, ...rest } = m;
       return rest;
     });
@@ -1097,7 +1206,7 @@ export function replaceHidden(week, from) {
     const day = next.days[d];
     let changed = false;
     const meals = day.meals.map((m, i) => {
-      if (m.custom || isLocked(next, d, i) || m.slot === "mellanmal" || (isVisible(m.dish) && fits(dishOf(m.dish), m.slot))) return m;
+      if (m.custom || isPinned(next, d, i) || m.slot === "mellanmal" || (isVisible(m.dish) && fits(dishOf(m.dish), m.slot))) return m;
       const other = otherMain(day, m.slot);
       const old = dishOf(m.dish);
       const sameKind = isMain(m.slot) ? DISHES[m.slot].find((x) => x.kind === old?.kind && x.id !== other) : null;
@@ -1118,7 +1227,7 @@ export function setBreakfastFrom(week, from) {
   for (let d = Math.max(0, from); d < 7 && b; d++) {
     const i = slotIndex(next.days[d], "frukost");
     const m = next.days[d].meals[i];
-    if (i < 0 || m.chosen || m.custom || isLocked(next, d, i) || m.dish === b.id) continue;
+    if (i < 0 || m.chosen || m.custom || isPinned(next, d, i) || m.dish === b.id) continue;
     next = withMeal(next, d, i, { slot: "frukost", dish: b.id, portion: 1, side: 1 });
   }
   return next;

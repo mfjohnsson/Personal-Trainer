@@ -138,18 +138,98 @@ assert.ok(topups < 40, "a top-up is the exception, not the rule");
 
 const w = meals.generateWeek("2026-11-09", T);
 
-// --- The clock: meals whose time has passed are eaten as planned and stay ---
+// --- The clock pins, it never locks; a day is over when you mark it done (or it is before today) ---
 {
-  meals.setNow("2026-11-11", 15 * 60); // Wednesday 15:00: breakfast and lunch are over
-  assert.ok(meals.isLocked(w, 2, 0) && meals.isLocked(w, 2, 1) && !meals.isLocked(w, 2, 2));
+  meals.setNow("2026-11-11", 15 * 60); // Wednesday 15:00: breakfast and lunch are past
+  assert.ok(meals.isPinned(w, 2, 0) && meals.isPinned(w, 2, 1) && !meals.isPinned(w, 2, 2));
   assert.ok(meals.dayOver(w, 1), "Tuesday is over");
   assert.ok(!meals.dayOver(w, 2));
   const changed = meals.setAdjust(w, 2, -500);
-  assert.deepEqual(changed.days[2].meals.slice(0, 2), w.days[2].meals.slice(0, 2), "eaten meals untouched");
+  assert.deepEqual(changed.days[2].meals.slice(0, 2), w.days[2].meals.slice(0, 2), "past meals untouched by the app");
   assert.notDeepEqual(changed.days[2].meals[2], w.days[2].meals[2], "dinner takes the change");
-  assert.equal(meals.moreProtein(w, 2, "lunch"), null, "lunch is over");
+  assert.equal(meals.moreProtein(w, 2, "lunch"), null, "no 'Mer protein' for a past meal");
+  // A past breakfast can still be changed: 3 eggs became 2, and the meals left make up the protein.
+  const bIdx = (wk) => meals.mealInfo(wk.days[2].meals[0]).ingredients;
+  const egg = bIdx(w).findIndex((i) => i.unit === "st" && /ägg/i.test(i.name));
+  if (egg >= 0) {
+    const less = meals.setAmount(w, 2, "frukost", egg, Math.max(0, bIdx(w)[egg].amount - 1));
+    assert.ok(less, "a past meal can be changed");
+    assert.equal(bIdx(less)[egg].amount, bIdx(w)[egg].amount - 1);
+    assert.deepEqual(less.days[2].meals[1], w.days[2].meals[1], "lunch (past) stays");
+    assert.notDeepEqual(less.days[2].meals[2], w.days[2].meals[2], "dinner fits again");
+    assert.ok(meals.dayTotals(less.days[2]).protein >= P - meals.PROTEIN_TOLERANCE, "the day still reaches its protein");
+  }
   meals.setNow("2026-11-11", 21 * 60);
-  assert.ok(meals.dayOver(w, 2), "after 20 the day is over");
+  assert.ok(!meals.dayOver(w, 2), "after 20 the day is not over until you say so");
+  const done = meals.setDone(w, 2, true);
+  assert.ok(meals.dayOver(done, 2) && meals.isDone(done.days[2]));
+  assert.deepEqual(done.days[2].meals, w.days[2].meals, "marking done changes nothing");
+  // On a done day a change touches only what you changed.
+  const dIng = meals.mealInfo(done.days[2].meals[2]).ingredients;
+  const d2 = meals.setAmount(done, 2, "middag", 0, dIng[0].amount + 50);
+  assert.deepEqual(d2.days[2].meals.slice(0, 2), done.days[2].meals.slice(0, 2));
+  assert.equal(meals.mealInfo(d2.days[2].meals[2]).ingredients[0].amount, dIng[0].amount + 50);
+  const again = meals.setDone(done, 2, false);
+  assert.ok(!again.days[2].done && !meals.dayOver(again, 2));
+  assert.ok(meals.isWeek(d2));
+  meals.setNow(null);
+}
+
+// --- Foods added to a meal, typed amounts, the top-up per day ---
+{
+  const banana = { nummer: 1, name: "Banan", kcal: 90, protein: 1, fat: 0, carbs: 20 };
+  const quark = { nummer: 2, name: "Kvarg naturell", kcal: 60, protein: 11, fat: 0, carbs: 4 };
+  const a1 = meals.addFood(w, 3, "frukost", banana, 120);
+  const b = a1.days[3].meals[0];
+  assert.equal(b.add.length, 1);
+  assert.equal(b.add[0].unit, "st");
+  const info = meals.mealInfo(b);
+  assert.ok(info.ingredients.some((i) => i.added && i.name === "Banan" && i.amount === 1));
+  assert.ok(info.kcal >= meals.mealInfo(w.days[3].meals[0]).kcal + 100, "the banana counts");
+  assert.ok(meals.isTouched(b) && meals.isWeek(a1));
+  assert.ok(meals.withinTarget(meals.dayTotals(a1.days[3]), T), "the day fits around it");
+  const a2 = meals.addFood(a1, 3, "lunch", quark);
+  const q = a2.days[3].meals[1].add[0];
+  assert.equal(q.unit, "g");
+  assert.ok(q.amount >= 10 && q.amount % 10 === 0);
+  const up = meals.stepAdd(a2, 3, "lunch", 0, 1);
+  assert.equal(up.days[3].meals[1].add[0].amount, q.amount + 10);
+  const typed = meals.setAddAmount(up, 3, "lunch", 0, 250);
+  assert.equal(typed.days[3].meals[1].add[0].amount, 250);
+  const gone = meals.setAddAmount(typed, 3, "lunch", 0, 0);
+  assert.equal(gone.days[3].meals[1].add, undefined, "0 takes it away");
+  const reset = meals.resetMeal(a1, 3, "frukost");
+  assert.equal(reset.days[3].meals[0].add.length, 1, "the app's amounts again, your banana stays");
+  assert.ok(!reset.days[3].meals[0].fixed);
+  const swapped = meals.changeDish(a1, 3, "frukost", meals.DISHES.frukost.find((x) => x.id !== b.dish).id);
+  assert.equal(swapped.days[3].meals[0].add.length, 1, "another dish keeps the banana");
+  // A typed amount that rounds to nothing takes the food away (never a stored 0).
+  const tiny = meals.setAddAmount(a2, 3, "lunch", 0, 0.4);
+  assert.equal(tiny.days[3].meals[1].add, undefined);
+  assert.ok(meals.isWeek(tiny));
+  // Typed amount: exactly what you typed (whole pieces and 5 g steps).
+  const lunch = meals.mealInfo(w.days[3].meals[1]).ingredients;
+  const t = meals.setAmount(w, 3, "lunch", 0, 140);
+  assert.equal(meals.mealInfo(t.days[3].meals[1]).ingredients[0].amount, 140, `typed 140 (was ${lunch[0].amount})`);
+  assert.equal(meals.setAmount(w, 3, "lunch", 0, -1), null);
+  const zero = meals.setAmount(w, 3, "lunch", 0, 0);
+  assert.equal(meals.mealInfo(zero.days[3].meals[1]).ingredients[0].amount, 0, "0 leaves it out");
+  // The top-up per day, also on a day that is over, and its portions.
+  meals.setNow("2026-11-12", 12 * 60);
+  const other = meals.allDishes("mellanmal").find((x) => x.id !== meals.topupId());
+  const past = meals.setExtraChoice(w, 1, other.id);
+  assert.equal(past.days[1].extra.dish, other.id, "yesterday's top-up can be changed");
+  assert.deepEqual(past.days[1].meals, w.days[1].meals, "without touching yesterday's meals");
+  assert.equal(meals.setExtraChoice(w, 1, "auto"), null, "no 'auto' for a day that is over");
+  const more = meals.stepExtra(past, 1, 1);
+  assert.equal(more.days[1].extra.portion, 1.5);
+  assert.equal(meals.stepExtra(meals.stepExtra(past, 1, -1), 1, -1), null, "not below half a portion");
+  assert.ok(meals.isWeek(more));
+  // On a day that is over a second top-up stays when the first is changed.
+  const two = { ...w, days: w.days.map((x, i) => (i === 1 ? { ...x, extra: { dish: "snack-shake", portion: 1 }, extra2: { dish: "snack-kvarg", portion: 1 } } : x)) };
+  assert.equal(meals.setExtraChoice(two, 1, other.id).days[1].extra2?.dish, "snack-kvarg");
+  // Older weeks' shake shows its portions.
+  assert.equal(meals.extraPortions({ meals: [], shake: 2 }), 2);
   meals.setNow(null);
 }
 
