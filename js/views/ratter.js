@@ -32,18 +32,9 @@ function rowHtml(d) {
   </div>`;
 }
 
-// The two top-ups, in order. Only protein-rich dishes can be chosen.
+// The top-ups: this list is what you choose from per day, and what the app suggests from.
 function topupHtml() {
-  const choices = meals.allDishes("mellanmal").filter(meals.isTopupCandidate);
-  const opt = (d, id) => `<option value="${esc(d.id)}"${d.id === id ? " selected" : ""}>${esc(d.name)} (${d.protein} g protein)</option>`;
-  const second = choices.filter((d) => d.id !== meals.topupId());
-  return `<div class="topup">
-    <div class="field"><label for="topup-pick">Först</label>
-      <select class="pick" id="topup-pick" data-topup="topup">${choices.map((d) => opt(d, meals.topupId())).join("")}</select></div>
-    ${second.length ? `<div class="field"><label for="topup2-pick">Sedan, om det behövs mer</label>
-      <select class="pick" id="topup2-pick" data-topup="topup2"><option value="none"${meals.topup2Id() ? "" : " selected"}>Inget</option>${second.map((d) => opt(d, meals.topup2Id())).join("")}</select></div>` : ""}
-    <p class="note">Läggs till de dagar måltiderna inte når proteinmålet i en rimlig storlek.</p>
-  </div>`;
+  return `<div class="topup"><p class="note">Det här är din lista. Varje dag väljer du påfyllning ur den. De dagar måltiderna inte räcker till proteinmålet föreslår appen en, en annan varje dag.</p></div>`;
 }
 
 // The everyday breakfast: planned every day; change it on a day when you want something else.
@@ -288,13 +279,6 @@ export function mount(el) {
       msg = dishes.setBreakfast(t.value, replace) ? `Varje dag: ${esc(meals.dishOf(t.value).name)}.` : SAVE_ERROR;
       undo = null;
       render("#breakfast-pick");
-      return;
-    }
-    if (t.dataset.topup) {
-      const which = t.dataset.topup;
-      msg = dishes.setTopup(t.value, which) ? `${which === "topup" ? "Först" : "Sedan"}: ${t.value === "none" ? "inget" : esc(meals.dishOf(t.value).name)}.` : SAVE_ERROR;
-      undo = null;
-      render(`#${which}-pick`);
       return;
     }
     if (!editing) return;

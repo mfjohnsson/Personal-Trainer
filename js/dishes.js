@@ -62,12 +62,10 @@ export function resetDish(id, replace) {
   return commit({ ...cur, items }, new Set([id]), replace);
 }
 
-// A dish can be switched off while every meal it is offered for keeps enough dishes, and it is not the
-// first protein top-up (pick another first).
+// A dish can be switched off while every meal it is offered for keeps enough dishes.
 export const offBlock = (id) => {
   const d = meals.dishOf(id);
   if (!d) return "Rätten finns inte.";
-  if (id === meals.topupId()) return "Det är den första proteinpåfyllningen. Välj en annan först.";
   if (id === meals.breakfastId() && meals.DISHES.frukost.length > 1) return "Det är din vardagsfrukost. Välj en annan först.";
   if (meals.isVisible(id) && !d.meals.every((slot) => meals.DISHES[slot].length > meals.minDishes(slot))) {
     return `Minst ${meals.minDishes(d.slot)} rätter behövs här.`;
@@ -75,15 +73,6 @@ export const offBlock = (id) => {
   return null;
 };
 export const canHide = (id) => !offBlock(id);
-
-// The protein top-ups (protein-rich ones); every planned day is re-fitted with them.
-export function setTopup(id, which = "topup") {
-  const none = which === "topup2" && id === "none";
-  if (!none && !meals.isTopupCandidate(meals.dishOf(id))) return false;
-  if (which === "topup2" && id === meals.topupId()) return false;
-  const cur = get("dishes") ?? {};
-  return commit({ ...cur, [which]: id }, new Set(none ? [] : [id]));
-}
 
 export function setVisible(id, show, replace) {
   if (!show && !canHide(id)) return false;

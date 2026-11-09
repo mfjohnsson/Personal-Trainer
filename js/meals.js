@@ -480,6 +480,23 @@ const WATER_COST = 0.05;
 export const topupDish = () => dishOf(topup);
 export const topup2Dish = () => (topup2 ? dishOf(topup2) : null);
 
+// The top-ups the app suggests for day `d`: from your list (Rätter → Påfyllning), the protein-rich ones,
+// starting with a different one each day so the week varies (the planner prefers the first, but takes a
+// later one when only that one makes the day work).
+export function suggestedTopups(d) {
+  const list = DISHES.mellanmal.filter(isTopupCandidate);
+  const i = list.length ? (((d ?? 0) % list.length) + list.length) % list.length : 0;
+  return [...list.slice(i), ...list.slice(0, i)];
+}
+const ROTATION_COST = 0.5; // per place after the day's own top-up in the rotation
+// kcal and protein of a stored top-up ({ dish, portion, water? }).
+function extraFixed(e) {
+  const d = dishOf(e.dish);
+  if (!d) return { kcal: 0, protein: 0 };
+  const v = e.water && d.water ? d.water : d;
+  return { kcal: v.kcal * e.portion, protein: v.protein * e.portion };
+}
+
 function extraOf(day, key = "extra") {
   const e = day[key];
   if (isObject(e) && typeof e.dish === "string" && finite(e.portion) && e.portion > 0) return e;
@@ -497,7 +514,7 @@ const extrasOf = (day) => ["extra", "extra2"].map((k) => extraMeal(day, k)).filt
 export const dayItems = (day) => [...day.meals, ...extrasOf(day)];
 
 // The scaled numbers of the day's top-ups, with whether you added them yourself.
-export const extrasInfo = (day) => ["extra", "extra2"].map((k) => (extraMeal(day, k) ? { key: k, ...mealInfo(extraMeal(day, k)), manual: !!extraOf(day, k).manual } : null)).filter(Boolean);
+export const extrasInfo = (day) => ["extra", "extra2"].map((k) => (extraMeal(day, k) ? { key: k, dish: extraOf(day, k).dish, ...mealInfo(extraMeal(day, k)), manual: !!extraOf(day, k).manual } : null)).filter(Boolean);
 
 export function dayTotals(day) {
   return dayItems(day).reduce((a, m) => {
@@ -620,12 +637,18 @@ function fitDay(items, target, fixed = { kcal: 0, protein: 0 }) {
   return { a, b, totals, cost: size + 5 * missK ** 2 + missP ** 2 };
 }
 
-// Fits the meals with or without top-ups. mode "off": none; "on": the first one always (you added it);
-// "auto": when it gives a clearly better day. The second top-up is only tried on top of the first.
-function fitPlan(items, target, mode, keepExtra = null) {
+// Fits the meals with or without top-ups. mode "off": none; "on": the ones you chose (`keep`), as you
+// chose them, the meals fit around them; "auto": the app's suggestion for day `d` when it gives a clearly
+// better day. The second top-up is only tried on top of the first.
+function fitPlan(items, target, mode, keep = [], d = 0) {
   const plain = { ...fitDay(items, target), extra: null, extra2: null };
-  const ex = mode === "on" && keepExtra ? dishOf(keepExtra.dish) : topupDish();
-  if (!ex || mode === "off") return plain;
+  if (mode === "off") return plain;
+  if (mode === "on") {
+    const fixed = keep.reduce((t, e) => { const x = extraFixed(e); return { kcal: t.kcal + x.kcal, protein: t.protein + x.protein }; }, { kcal: 0, protein: 0 });
+    return { ...fitDay(items, target, fixed), extra: keep[0] ?? null, extra2: keep[1] ?? null };
+  }
+  const order = suggestedTopups(d);
+  if (!order.length) return plain;
   // Only for protein: when the meals fall short of it, or reach it only with a protein part too big.
   const short = plain.totals.protein < target.protein - 4;
   const atNormal = items.reduce((acc, it, i) => acc + (it.a[0] === it.a[1] ? it.a[0] : Math.min(NORMAL_MAX, it.a[1])) * it.p.protein + plain.b[i] * it.s.protein, 0);
@@ -637,8 +660,6 @@ function fitPlan(items, target, mode, keepExtra = null) {
   if (mode === "auto" && !short && !big && !overK) return plain;
   // A top-up covers the protein the meals can't give at a sensible size, not calories.
   const tooMuch = (protein) => mode === "auto" && !overK && protein > Math.max(0, need) + 20;
-  const variants = [{ d: ex, water: false }, ...(ex.water ? [{ d: { ...ex, ...ex.water }, water: true }] : [])];
-  const ex2 = topup2Dish();
   let best = null;
   const consider = (fit, extra, extra2, extraCost) => {
     const cost = fit.cost + extraCost;
@@ -646,10 +667,11 @@ function fitPlan(items, target, mode, keepExtra = null) {
   };
   // The protein never ends up far over the target because of a top-up.
   const overP = (fit) => fit.totals.protein > target.protein + PROTEIN_OVER_MAX;
-  // You added it: the portion you chose (one, unless set otherwise), only the meals fit around it.
-  const portions = mode === "on" && keepExtra
-    ? [keepExtra.portion]
-    : Array.from({ length: Math.round(extraMax(ex) / EXTRA_STEP) }, (_, k) => (k + 1) * EXTRA_STEP);
+  order.forEach((ex, rank) => {
+  const ex2 = order[(rank + 1) % order.length];
+  const variants = [{ d: ex, water: false }, ...(ex.water ? [{ d: { ...ex, ...ex.water }, water: true }] : [])];
+  const portions = Array.from({ length: Math.round(extraMax(ex) / EXTRA_STEP) }, (_, k) => (k + 1) * EXTRA_STEP);
+  const rot = rank * ROTATION_COST;
   for (const v of variants) {
     for (const p of portions) {
       const fixed = { kcal: v.d.kcal * p, protein: v.d.protein * p };
@@ -658,21 +680,21 @@ function fitPlan(items, target, mode, keepExtra = null) {
       const many = Math.max(0, p - 1) * 0.3;
       if (tooMuch(fixed.protein)) continue;
       const fit = fitDay(items, target, fixed);
-      if (mode !== "on" && overP(fit)) continue;
-      consider(fit, extra, null, EXTRA_COST + many + (v.water ? WATER_COST : 0));
+      if (overP(fit)) continue;
+      consider(fit, extra, null, rot + EXTRA_COST + many + (v.water ? WATER_COST : 0));
       if (ex2 && ex2.id !== ex.id && p <= 1.5) {
         for (let p2 = EXTRA_STEP; p2 <= extraMax(ex2); p2 += EXTRA_STEP) {
           const f2 = { kcal: fixed.kcal + ex2.kcal * p2, protein: fixed.protein + ex2.protein * p2 };
           if (tooMuch(f2.protein)) continue;
           const fit2 = fitDay(items, target, f2);
           if (overP(fit2)) continue;
-          consider(fit2, extra, { dish: ex2.id, portion: p2 }, 2 * EXTRA_COST + 0.2 + (v.water ? WATER_COST : 0));
+          consider(fit2, extra, { dish: ex2.id, portion: p2 }, rot + 2 * EXTRA_COST + 0.2 + (v.water ? WATER_COST : 0));
         }
       }
     }
   }
-  if (mode === "on" || !best) return best ?? plain;
-  return best.cost < plain.cost ? best : plain;
+  });
+  return best && best.cost < plain.cost ? best : plain;
 }
 
 // Re-fits day `d` of `week` (given as `day`, which may differ from the stored one). Eaten and past meals
@@ -704,12 +726,13 @@ function refit(week, d, day) {
   const mode = day.extraOff ? "off" : old?.manual ? "on" : "auto";
   // Foods you added are what you said: the rest of the day fits around them.
   const added = day.meals.reduce((t, m) => (m.custom ? t : add(t, addsTotal(m), m.ate ?? 1)), { ...ZERO });
-  const fit = fitPlan(items, { kcal: target.kcal - added.kcal, protein: target.protein - added.protein }, mode, old);
+  const keep = mode === "on" ? [old, ...(old2?.manual ? [old2] : [])].filter((e) => dishOf(e.dish)) : [];
+  const fit = fitPlan(items, { kcal: target.kcal - added.kcal, protein: target.protein - added.protein }, mode, keep, d);
   const manual = mode === "on" ? { manual: true } : {};
   return {
     ...plain,
     ...(fit.extra ? { extra: { ...fit.extra, ...manual } } : {}),
-    ...(fit.extra2 ? { extra2: fit.extra2 } : {}),
+    ...(fit.extra2 ? { extra2: { ...fit.extra2, ...manual } } : {}),
     meals: day.meals.map((m, i) => {
       if (locked[i] || m.custom) return m;
       const { manual: _m, ...rest } = m;
@@ -990,42 +1013,82 @@ export function changeDish(week, d, slot, dishId) {
 // The top-up added (on) or removed (off) by you; the day is re-fitted.
 export function setExtra(week, d, on) {
   const day = week.days[d];
-  if (!day || (on && !topupDish())) return null;
+  const first = suggestedTopups(d)[0];
+  if (!day || (on && !first)) return null;
   const { shake: _s, extra: _e, extra2: _e2, extraOff: _o, ...plain } = day;
-  const next = on ? { ...plain, extra: { dish: topup, portion: 1, manual: true } } : { ...plain, extraOff: true };
+  const next = on ? { ...plain, extra: { dish: first.id, portion: 1, manual: true } } : { ...plain, extraOff: true };
   return replaceDay(week, d, refit(week, d, next));
 }
 
-// The day's top-up as planned: "auto" (the app adds one when needed), "none", or a top-up dish you chose
-// (one portion, the meals fit around it; the second top-up may still be added when the protein needs it). Null for an unknown day or dish, or a day already over.
-// On a day that is over only the top-up changes: "auto" is not offered there.
-export function setExtraChoice(week, d, choice) {
+// --- The day's top-ups: up to two rows, `k` 0 or 1 ---
+// Row 0: "auto" (the app suggests one from your list when the meals fall short of the protein), "none", or
+// a top-up you chose. Row 1 (only with a first one): a top-up you chose, or "none" to take it away. What
+// you choose is kept as you chose it and the meals fit around it; choosing makes both rows yours. On a day
+// that is over only the top-ups change and "auto" is not offered.
+export const TOPUP_ROWS = 2;
+const KEYS = ["extra", "extra2"];
+function withTopups(week, d, list, off = false) {
   const day = week.days[d];
-  const over = !!day && dayOver(week, d);
-  if (!day || (over && choice === "auto")) return null;
-  if (choice !== "auto" && choice !== "none" && !(dishOf(choice)?.slot === "mellanmal" && isListed(choice))) return null;
-  const { shake: _s, extra: _e, extra2: _e2, extraOff: _o, ...rest } = day;
-  // On a day that is over the second top-up stays, unless you chose none at all.
-  const plain = over && choice !== "none" && extraOf(day, "extra2") ? { ...rest, extra2: extraOf(day, "extra2") } : rest;
-  const cur = extraOf(day);
-  const portion = cur?.dish === choice ? cur.portion : 1;
-  const next = choice === "none" ? { ...plain, extraOff: true }
-    : choice === "auto" ? plain : { ...plain, extra: { dish: choice, portion, manual: true } };
-  return replaceDay(week, d, over ? next : refit(week, d, next));
-}
-
-// The first top-up half a portion more or less (it is then yours: the meals fit around it).
-export function stepExtra(week, d, dir) {
-  const day = week.days[d];
-  const e = day ? extraOf(day) : null;
-  if (!e) return null;
-  const portion = Math.round((e.portion + dir * EXTRA_STEP) / EXTRA_STEP) * EXTRA_STEP;
-  if (portion <= 0 || portion > EXTRA_MAX) return null;
-  const { shake: _s, extraOff: _o, ...plain } = day;
-  const next = { ...plain, extra: { ...e, portion, manual: true } };
+  const { shake: _s, extra: _e, extra2: _e2, extraOff: _o, ...plain } = day;
+  const next = { ...plain, ...(off ? { extraOff: true } : {}) };
+  list.slice(0, TOPUP_ROWS).forEach((e, k) => { next[KEYS[k]] = { ...e, manual: true }; });
   return replaceDay(week, d, dayOver(week, d) ? next : refit(week, d, next));
 }
+const topupsOf = (day) => KEYS.map((k) => extraOf(day, k)).filter(Boolean);
+const choosable = (id) => dishOf(id)?.slot === "mellanmal" && isListed(id);
+
+export function setTopup(week, d, k, choice) {
+  const day = week.days[d];
+  if (!day || !(k === 0 || k === 1)) return null;
+  const over = dayOver(week, d);
+  const cur = topupsOf(day);
+  if (k === 0 && choice === "auto") {
+    if (over) return null;
+    const { shake: _s, extra: _e, extra2: _e2, extraOff: _o, ...plain } = day;
+    return replaceDay(week, d, refit(week, d, plain));
+  }
+  if (choice === "none") return k === 0 ? withTopups(week, d, [], true) : cur.length ? withTopups(week, d, cur.slice(0, 1)) : null;
+  // The same top-up in both rows is one row with more portions.
+  if (!choosable(choice) || (k === 1 && !cur.length) || cur.some((e, j) => j !== k && e.dish === choice)) return null;
+  const portion = cur[k]?.dish === choice ? cur[k].portion : 1;
+  const water = cur[k]?.dish === choice && cur[k].water ? { water: true } : {};
+  const list = [...cur];
+  list[k] = { dish: choice, portion, ...water };
+  return withTopups(week, d, list);
+}
+// Backwards compatible: the first row.
+export const setExtraChoice = (week, d, choice) => setTopup(week, d, 0, choice);
+
+// "+ Lägg till påfyllning": one more row, the app's suggestion that is not already there.
+export const canAddTopup = (day, d) => topupsOf(day).length < TOPUP_ROWS && suggestedTopups(d).some((x) => !topupsOf(day).some((e) => e.dish === x.id));
+export function addTopup(week, d) {
+  const day = week.days[d];
+  const cur = day ? topupsOf(day) : [];
+  if (!day || cur.length >= TOPUP_ROWS) return null;
+  const pick = suggestedTopups(d).find((x) => !cur.some((e) => e.dish === x.id));
+  if (!pick) return null;
+  return withTopups(week, d, [...cur, { dish: pick.id, portion: 1 }]);
+}
+
+// Half a portion more or less of row `k`.
+export function stepTopup(week, d, k, dir) {
+  const day = week.days[d];
+  const cur = day ? topupsOf(day) : [];
+  if (!cur[k]) return null;
+  const portion = Math.round((cur[k].portion + dir * EXTRA_STEP) / EXTRA_STEP) * EXTRA_STEP;
+  if (portion <= 0 || portion > EXTRA_MAX) return null;
+  const list = [...cur];
+  list[k] = { ...cur[k], portion };
+  return withTopups(week, d, list);
+}
+export const stepExtra = (week, d, dir) => stepTopup(week, d, 0, dir);
 export const EXTRA_PORTION_MAX = EXTRA_MAX;
+
+// The protein still missing for the day's target (0 when reached).
+export function proteinShort(day, target) {
+  const goal = dayTarget(day, target);
+  return Math.max(0, Math.round(goal.protein - dayTotals(day).protein));
+}
 
 // The day marked done ("Klar") or opened again. Done: nothing in it is re-fitted any more, and the week's
 // balance counts it. Opened again: the meals not yet past fit the day again.
@@ -1038,7 +1101,7 @@ export function setDone(week, d, on) {
 }
 
 // The day's top-up choice, as setExtraChoice takes it.
-export const extraPortions = (day) => extraOf(day)?.portion ?? 0;
+export const extraPortions = (day, k = 0) => extraOf(day, KEYS[k])?.portion ?? 0;
 export const extraChoice = (day) => (day.extraOff ? "none" : extraOf(day)?.manual ? extraOf(day).dish : "auto");
 
 // Calories up (or down) for one day; protein stays. `auto` = set by the app to even out the week.

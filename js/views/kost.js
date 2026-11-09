@@ -98,8 +98,9 @@ function planWeekHtml(week, from) {
         </select></div>`;
     }).join("");
     const info = meals.extrasInfo(day);
-    const second = meals.extraChoice(day) === "auto" ? "" : info.filter((e) => e.key === "extra2")
-      .map((e) => `<div class="plan-row"><span class="pick-label">Påfyllning 2</span><span class="plan-fixed">${esc(e.name)}</span></div>`).join("");
+    // The second one as a picker once it is yours; the app's own second suggestion shows in the first picker.
+    const second = !info[1] ? ""
+      : `<div class="plan-row"><label class="pick-label" for="extra-${d}-1">Påfyllning 2</label>${mealui.extraSelectHtml(week, d, `extra-${d}-1`, 1)}</div>`;
     const extras = `<div class="plan-row"><label class="pick-label" for="extra-${d}">Påfyllning</label>
         ${mealui.extraSelectHtml(week, d)}</div>${second}`;
     return `<section class="card plan-day">

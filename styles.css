@@ -454,3 +454,6 @@ details.prep > .note { margin: 0 0 12px; }
 .plan-fixed { font-weight: 600; color: var(--ink-2); padding: 8px 0; }
 .plan-done-end { width: 100%; margin-top: 4px; }
 details.card.day { scroll-margin-top: 12px; }
+/* Under the top-ups: protein still missing, and "+ Lägg till påfyllning". */
+.topup-more { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 0 8px; }
+.topup-more .note { margin: 0; color: var(--danger); font-weight: 600; }

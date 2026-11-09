@@ -222,47 +222,62 @@ function mealHtml(week, d, m, i, planOnly) {
   </details>`;
 }
 
-// The day's top-up picker: the app picks when needed, none, or one you choose. On a day that is over
-// there is nothing left for the app to pick: it shows what the day had.
-export function extraSelectHtml(week, d, id = `extra-${d}`) {
+// A top-up picker for row `k` of day `d`. Row 0: the app suggests one when needed ("auto"), none, or one
+// from your list. Row 1: one from your list, or "Ta bort". On a day that is over there is nothing left for
+// the app to pick: it shows what the day had.
+export function extraSelectHtml(week, d, id = `extra-${d}`, k = 0) {
   const day = week.days[d];
   const over = meals.dayOver(week, d);
   const info = meals.extrasInfo(day);
-  let choice = meals.extraChoice(day);
-  if (over && choice === "auto") choice = day.extra?.dish ?? "none";
+  const cur = info[k];
+  let choice = k === 0 ? meals.extraChoice(day) : cur?.dish ?? "none";
+  if (over && choice === "auto") choice = cur?.dish ?? "none";
   const list = [...meals.DISHES.mellanmal];
   if (choice !== "auto" && choice !== "none" && !list.some((o) => o.id === choice) && meals.dishOf(choice)) list.push(meals.dishOf(choice));
   const opt = (v, text) => `<option value="${esc(v)}"${v === choice ? " selected" : ""}>${esc(text)}</option>`;
-  const auto = choice === "auto" && info.length ? `Appen väljer: ${info.map((e) => e.name).join(" + ")}` : "Appen väljer vid behov";
-  return `<select class="pick" id="${id}" data-extra-day="${d}" aria-label="Påfyllning ${regenText(d)}">
-    ${over ? "" : opt("auto", auto)}${opt("none", "Ingen")}${list.map((o) => opt(o.id, o.name)).join("")}
+  const auto = choice === "auto" && info.length ? `Appens förslag: ${info.map((e) => e.name).join(" + ")}` : "Appen föreslår vid behov";
+  const head = k === 0 ? `${over ? "" : opt("auto", auto)}${opt("none", "Ingen")}` : opt("none", "Ta bort");
+  return `<select class="pick" id="${id}" data-extra-day="${d}" data-row="${k}" aria-label="Påfyllning ${k + 1} ${regenText(d)}">
+    ${head}${list.map((o) => opt(o.id, o.name)).join("")}
   </select>`;
 }
 
-// The day's top-up as a row like the meals: what it is, how much, and the picker.
-function topupRowHtml(week, d) {
+// One top-up row like the meals: what it is, how many portions, and the picker. With no top-up: one row
+// "Ingen" with the picker.
+function topupRowHtml(week, d, e, k) {
   const day = week.days[d];
-  const key = `${d}:extra`;
-  const extras = meals.extrasInfo(day);
-  const first = extras.find((e) => e.key === "extra");
-  const kcal = extras.reduce((a, e) => a + e.kcal, 0), protein = extras.reduce((a, e) => a + e.protein, 0);
-  const portion = first ? meals.extraPortions(day) : 0;
-  const portions = first ? `<div class="ate-row ing-tweak"><span class="pick-label">Portioner</span><span class="amt-ctl">
-      <button class="icon-btn" type="button" data-act="extra-step" data-dir="-1" data-day="${d}" aria-label="Halv portion mindre"${portion > 0.5 ? "" : " disabled"}>−</button>
+  const key = `${d}:extra${k}`;
+  const portion = e ? meals.extraPortions(day, k) : 0;
+  const auto = e && !e.manual;
+  const portions = e ? `<div class="ate-row ing-tweak"><span class="pick-label">Portioner</span><span class="amt-ctl">
+      <button class="icon-btn" type="button" data-act="topup-step" data-row="${k}" data-dir="-1" data-day="${d}" aria-label="Halv portion mindre"${portion > 0.5 ? "" : " disabled"}>−</button>
       <span class="ate-val">${nf.format(portion)}</span>
-      <button class="icon-btn" type="button" data-act="extra-step" data-dir="1" data-day="${d}" aria-label="Halv portion mer"${portion < meals.EXTRA_PORTION_MAX ? "" : " disabled"}>+</button>
+      <button class="icon-btn" type="button" data-act="topup-step" data-row="${k}" data-dir="1" data-day="${d}" aria-label="Halv portion mer"${portion < meals.EXTRA_PORTION_MAX ? "" : " disabled"}>+</button>
     </span></div>` : "";
-  const why = !extras.length ? "" : first && !first.manual ? `<p class="note">Appen la till den för att nå proteinmålet.</p>` : "";
   return `<details class="meal topup-row" data-meal="${key}"${openMeals.has(key) ? " open" : ""}>
-    <summary><span class="meal-slot">Påfyllning</span><span class="meal-name">${extras.length ? esc(extras.map((e) => e.name).join(" + ")) : "Ingen"}</span>
-      <span class="meal-kcal">${extras.length ? `${kcal} kcal · ${protein} g` : ""}</span></summary>
+    <summary><span class="meal-slot">Påfyllning${k ? " 2" : ""}</span><span class="meal-name">${e ? esc(e.name) : "Ingen"}${auto ? ` <span class="badge">Förslag</span>` : ""}</span>
+      <span class="meal-kcal">${e ? `${e.kcal} kcal · ${e.protein} g` : ""}</span></summary>
     <div class="meal-body">
-      ${extras.map((e) => `<p class="note">${extras.length > 1 ? `<strong>${esc(e.name)}:</strong> ` : ""}${ingredientsText(e)}</p>`).join("")}
+      ${e ? `<p class="note">${ingredientsText(e)}</p>` : ""}
       ${portions}
-      ${why}
-      <div class="pick-row"><label class="pick-label" for="extra-${d}">Byt påfyllning</label>${extraSelectHtml(week, d)}</div>
+      ${auto ? `<p class="note">Appens förslag för att nå proteinmålet. Byt eller ta bort om du vill.</p>` : ""}
+      <div class="pick-row"><label class="pick-label" for="extra-${d}-${k}">Byt påfyllning</label>${extraSelectHtml(week, d, `extra-${d}-${k}`, k)}</div>
     </div>
   </details>`;
+}
+
+// The day's top-ups, and how much protein is still missing with a button for one more.
+function topupsHtml(week, d, target) {
+  const day = week.days[d];
+  const info = meals.extrasInfo(day);
+  const rows = info.length ? info.map((e, k) => topupRowHtml(week, d, e, k)).join("") : topupRowHtml(week, d, null, 0);
+  const left = meals.proteinShort(day, target);
+  const more = meals.canAddTopup(day, d);
+  if (!left && !more) return rows;
+  return `${rows}<div class="topup-more">
+    ${left > 4 ? `<span class="note">${left} g protein kvar till målet</span>` : "<span></span>"}
+    ${more ? `<button class="link-btn" type="button" data-act="topup-add" data-day="${d}">+ Lägg till påfyllning</button>` : ""}
+  </div>`;
 }
 
 // The calorie panel ("Justera kalorierna"): more or fewer calories than the target for this day.
@@ -326,13 +341,11 @@ export function dayHtml(week, d, target, bal = null, { planOnly = false, regen =
   const goal = meals.dayTarget(day, target);
   const t = meals.dayTotals(day);
   const over = meals.dayOver(week, d);
-  const short = !over && t.protein < goal.protein - meals.PROTEIN_TOLERANCE;
-  return `<div class="meals">${day.meals.map((m, i) => mealHtml(week, d, m, i, planOnly)).join("")}${topupRowHtml(week, d)}</div>
+  return `<div class="meals">${day.meals.map((m, i) => mealHtml(week, d, m, i, planOnly)).join("")}${topupsHtml(week, d, target)}</div>
     <div class="day-foot">
       <p class="note day-total">${t.kcal} av ${goal.kcal} kcal · ${t.protein} av ${goal.protein} g protein</p>
       ${over ? "" : menuHtml(week, d, target, bal, { regen })}
     </div>
-    ${short ? `<p class="note warn">Proteinet ligger lågt i dag.</p>` : ""}
     ${canFinish ? doneHtml(day, d) : ""}`;
 }
 
@@ -439,8 +452,9 @@ export function bindMeals(el, { start, target, rerender, failed }) {
     }
     if (sel instanceof HTMLSelectElement && sel.dataset.extraDay !== undefined) {
       mealplan.tick();
-      openMeals.add(`${sel.dataset.extraDay}:extra`);
-      save(meals.setExtraChoice(week(), +sel.dataset.extraDay, sel.value), `#${sel.id}`);
+      const k = +(sel.dataset.row ?? 0);
+      openMeals.add(`${sel.dataset.extraDay}:extra${k}`);
+      save(meals.setTopup(week(), +sel.dataset.extraDay, k, sel.value), `#${sel.id}`);
       return;
     }
     if (!(sel instanceof HTMLSelectElement) || sel.dataset.slot === undefined || sel.dataset.day === undefined) return;
@@ -517,9 +531,14 @@ export function bindMeals(el, { start, target, rerender, failed }) {
       save(meals.tweakIngredient(week(), +day, slot, ing, dir), `[data-act="tweak"][data-day="${day}"][data-slot="${slot}"][data-ing="${ing}"][data-dir="${dir}"]:not(:disabled)`);
     }
     else if (act === "reset") save(meals.resetMeal(week(), +day, slot), sel("skip"));
-    else if (act === "extra-step") {
-      openMeals.add(`${day}:extra`);
-      save(meals.stepExtra(week(), +day, +btn.dataset.dir), `[data-act="extra-step"][data-day="${day}"][data-dir="${btn.dataset.dir}"]:not(:disabled)`);
+    else if (act === "topup-step") {
+      const k = btn.dataset.row;
+      openMeals.add(`${day}:extra${k}`);
+      save(meals.stepTopup(week(), +day, +k, +btn.dataset.dir), `[data-act="topup-step"][data-day="${day}"][data-row="${k}"][data-dir="${btn.dataset.dir}"]:not(:disabled)`);
+    }
+    else if (act === "topup-add") {
+      openMeals.add(`${day}:extra1`);
+      save(meals.addTopup(week(), +day), `#extra-${day}-1`);
     }
     else if (act === "day-done") save(meals.setDone(week(), +day, true), `[data-act="day-open"][data-day="${day}"]`);
     else if (act === "day-open") save(meals.setDone(week(), +day, false), `[data-act="day-done"][data-day="${day}"]`);

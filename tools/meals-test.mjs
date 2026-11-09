@@ -227,7 +227,38 @@ const w = meals.generateWeek("2026-11-09", T);
   assert.ok(meals.isWeek(more));
   // On a day that is over a second top-up stays when the first is changed.
   const two = { ...w, days: w.days.map((x, i) => (i === 1 ? { ...x, extra: { dish: "snack-shake", portion: 1 }, extra2: { dish: "snack-kvarg", portion: 1 } } : x)) };
-  assert.equal(meals.setExtraChoice(two, 1, other.id).days[1].extra2?.dish, "snack-kvarg");
+  assert.equal(meals.setExtraChoice(two, 1, "snack-kesofrukt").days[1].extra2?.dish, "snack-kvarg");
+  // Your top-ups per day: the first and a second one, both kept as you chose them.
+  const t1 = meals.setTopup(w, 4, 0, "snack-kesofrukt");
+  assert.equal(t1.days[4].extra.dish, "snack-kesofrukt");
+  assert.ok(t1.days[4].extra.manual && !t1.days[4].extra2, "the app adds nothing to what you chose");
+  const t2 = meals.addTopup(t1, 4);
+  assert.ok(t2.days[4].extra2?.manual && t2.days[4].extra2.dish !== "snack-kesofrukt", "one more, another one");
+  assert.equal(meals.addTopup(t2, 4), null, "at most two");
+  const t3 = meals.setTopup(t2, 4, 1, "snack-shake");
+  assert.equal(t3.days[4].extra2.dish, "snack-shake");
+  assert.equal(meals.extrasInfo(t3.days[4])[1].dish, "snack-shake", "the picker knows what is chosen");
+  assert.equal(t3.days[4].extra.dish, "snack-kesofrukt", "the first stays");
+  const t4 = meals.stepTopup(t3, 4, 1, 1);
+  assert.equal(t4.days[4].extra2.portion, 1.5);
+  assert.ok(meals.withinTarget(meals.dayTotals(t4.days[4]), T) || meals.dayTotals(t4.days[4]).kcal <= T.kcal * 1.05, "the meals fit around them");
+  const t5 = meals.setTopup(t4, 4, 1, "none");
+  assert.ok(!t5.days[4].extra2 && t5.days[4].extra.dish === "snack-kesofrukt", "row 2 taken away");
+  const t6 = meals.setTopup(t5, 4, 0, "none");
+  assert.ok(!t6.days[4].extra && t6.days[4].extraOff);
+  const t7 = meals.setTopup(t6, 4, 0, "auto");
+  assert.ok(!t7.days[4].extraOff && !t7.days[4].extra?.manual, "back to the app's suggestion");
+  assert.equal(meals.setTopup(t6, 4, 1, "snack-shake"), null, "no second without a first");
+  assert.ok(meals.isWeek(t4));
+  // The app's suggestion rotates through your list, so the week varies.
+  const firsts = [0, 1, 2].map((d) => meals.suggestedTopups(d)[0].id);
+  assert.equal(new Set(firsts).size, Math.min(3, meals.DISHES.mellanmal.filter(meals.isTopupCandidate).length));
+  const hiP = meals.generateWeek("2026-11-09", { kcal: 2200, protein: 210 });
+  assert.ok(new Set(hiP.days.map((x) => x.extra?.dish).filter(Boolean)).size >= 2, "different top-ups over the week");
+  assert.equal(meals.setTopup(t3, 4, 0, "snack-shake"), null, "not the same top-up in both rows");
+  const bare = { meals: [], extraOff: true };
+  assert.equal(meals.proteinShort(bare, T), T.protein, "nothing eaten: all of it missing");
+  assert.equal(meals.setTopup(t6, 4, 1, "none"), null);
   // Older weeks' shake shows its portions.
   assert.equal(meals.extraPortions({ meals: [], shake: 2 }), 2);
   meals.setNow(null);
@@ -451,7 +482,7 @@ const w = meals.generateWeek("2026-11-09", T);
   assert.ok(!meals.allDishes("huvudratt").some((d) => d.id.startsWith("egen-")), "failed save leaves no own dish behind");
   assert.equal(dishes.setVisible("lunch-torsk", false), false);
   assert.ok(meals.isVisible("lunch-torsk"), "failed hide is rolled back");
-  assert.ok(dishes.offBlock("snack-shake"), "the first top-up can't be switched off");
+  assert.equal(dishes.offBlock("snack-shake"), null, "any top-up in the list can be switched off");
   assert.equal(ok.values.kind, "storkok");
 }
 
