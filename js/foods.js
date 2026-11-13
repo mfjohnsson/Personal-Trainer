@@ -139,6 +139,23 @@ const firstMatch = (table, name, fallback) => table.find(([re]) => re.test(name)
 const COUNTED = [[/^ägg\b/i, 60], [/^banan\b/i, 120], [/^(äpple|päron|apelsin)\b/i, 150]];
 export const pieceGrams = (name) => COUNTED.find(([re]) => re.test(String(name ?? "").trim()))?.[1] ?? null;
 
+// Liquids you pour rather than weigh. Drinks (beer, wine, soda, juice) go by the centilitre, starting at a
+// glass or bottle; milk, water, coffee and the like by the decilitre. The first word must be the liquid
+// itself, so "Mjölkchoklad", "Kaffegrädde" and "Vattenmelon" are weighed.
+const DL_LIQUID = /^(mjölk|lättmjölk|mellanmjölk|standardmjölk|mjölkdryck|filmjölk|fil|kefir|kärnmjölk|havredryck|sojadryck|mandeldryck|risdryck|vatten|kaffe|te|saft|buljong|smoothie|drickyoghurt|proteindryck|blåbärssoppa|nyponsoppa)(?![\p{L}])/iu;
+
+// How a food added to a meal is measured: { unit, gpu (grams per unit), amount (to start from), step? (for
+// + and −: one more glass or bottle) }, or null
+// for grams. Eggs and whole fruit are counted.
+export function measureOf(food) {
+  const name = String(food?.name ?? "").trim();
+  const per = pieceGrams(name);
+  if (per) return { unit: "st", gpu: per, amount: 1 };
+  if (isDrink({ name })) { const size = drinkSize({ name }); return { unit: "cl", gpu: 10, amount: size, step: size }; }
+  if (DL_LIQUID.test(name)) return { unit: "dl", gpu: /^(mjölk|lätt|mellan|standard|fil|kefir|kärn|drickyoghurt)/i.test(name) ? 103 : 100, amount: 2 };
+  return null;
+}
+
 export function gramsOf(amount, unit, name) {
   if (unit === "g") return { grams: amount, estimated: false };
   const per = unit === "dl" ? firstMatch(DL_G, name, 100) : unit === "skivor" ? firstMatch(SLICE_G, name, 35) : firstMatch(PIECE_G, name, 100);

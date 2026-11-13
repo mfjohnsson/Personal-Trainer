@@ -97,3 +97,13 @@ assert.equal(foods.pieceGrams("Ägg rått"), 60);
 assert.equal(foods.pieceGrams("Banan"), 120);
 assert.equal(foods.pieceGrams("Äpple m. skal"), 150);
 for (const n of ["Äggula rå", "Äggnudlar kokta", "Äpplemos", "Tomat", "Kyckling bröstfilé rå"]) assert.equal(foods.pieceGrams(n), null, n);
+
+// How added foods are measured: drinks in cl, milk and the like in dl, eggs in st, the rest in grams.
+assert.deepEqual(foods.measureOf({ name: "Öl lättöl vol. % 2,3" }), { unit: "cl", gpu: 10, amount: 33, step: 33 });
+assert.equal(foods.measureOf({ name: "Rödvin vol. % 13,5 (uppskattning)" }).amount, 15);
+assert.equal(foods.measureOf({ name: "Läsk cola" }).unit, "cl");
+assert.deepEqual(foods.measureOf({ name: "Mjölk fett 3% berikad" }), { unit: "dl", gpu: 103, amount: 2 });
+for (const n of ["Kaffe bryggt", "Te bryggt", "Vatten kranvatten", "Filmjölk fett 3%"]) assert.equal(foods.measureOf({ name: n })?.unit, "dl", n);
+assert.equal(foods.measureOf({ name: "Ägg rått" }).unit, "st");
+for (const n of ["Mjölkchoklad", "Kaffegrädde fett 12%", "Vattenmelon", "Vattenkrasse", "Kvarg naturell", "Mjölkpulver fett 1%"]) assert.equal(foods.measureOf({ name: n }), null, n);
+console.log("ok: measures");

@@ -155,19 +155,31 @@ function editHtml(week, d, m, i, planOnly) {
   const info = meals.mealInfo(m);
   const dish = meals.dishOf(m.dish);
   const nDish = dish.ingredients.length;
+  const key = `${d}:${m.slot}`;
+  const canAdd = foods.isLoaded() && (m.add?.length ?? 0) < meals.ADD_MAX;
   const rows = !dish.lines ? `<p class="note">${ingredientsText(info)}</p>` : info.ingredients.map((it, j) => {
     if (it.added) {
       const k = j - nDish;
       return amountRow(it.name, it.amount, it.unit, {
         attrs, stepAct: "add-step", inputAttr: "data-add-amt", i: k, canDown: true, canUp: true,
-        remove: `<button class="icon-btn" type="button" data-act="add-remove" data-ing="${k}" ${attrs} aria-label="Ta bort ${esc(it.name.toLowerCase())}">✕</button>`,
+        remove: `<button class="icon-btn rm" type="button" data-act="add-remove" data-ing="${k}" ${attrs} aria-label="Ta bort ${esc(it.name.toLowerCase())}">✕</button>`,
       });
     }
     const t = Array.isArray(m.tweak) ? m.tweak[j] ?? 1 : 1;
-    return amountRow(it.name, it.amount, it.unit, { attrs, stepAct: "tweak", inputAttr: "data-amt", i: j, canDown: it.amount > 0, canUp: t < meals.TWEAK_MAX });
+    const lower = esc(it.name.toLowerCase());
+    // Left out of this meal only: swap it for something else or put it back.
+    if (t === 0) {
+      return `<div class="ate-row ing-tweak ing-off"><span class="pick-label"><s>${esc(it.name)}</s> <span class="note">borttagen</span></span>
+        <span class="amt-ctl">
+          ${canAdd ? `<button class="link-btn" type="button" data-act="ing-swap" ${attrs} aria-label="Byt ut ${lower}">Byt ut</button>` : ""}
+          <button class="link-btn" type="button" data-act="ing-restore" data-ing="${j}" ${attrs} aria-label="Lägg tillbaka ${lower}">Tillbaka</button>
+        </span></div>`;
+    }
+    return amountRow(it.name, it.amount, it.unit, {
+      attrs, stepAct: "tweak", inputAttr: "data-amt", i: j, canDown: it.amount > 0, canUp: t < meals.TWEAK_MAX,
+      remove: `<button class="icon-btn rm" type="button" data-act="ing-remove" data-ing="${j}" ${attrs} aria-label="Ta bort ${lower} från måltiden">✕</button>`,
+    });
   }).join("");
-  const key = `${d}:${m.slot}`;
-  const canAdd = foods.isLoaded() && (m.add?.length ?? 0) < meals.ADD_MAX;
   const adder = addFor === key ? addFormHtml(attrs)
     : canAdd ? `<button class="link-btn add-btn" type="button" data-act="add-open" ${attrs}>+ Lägg till livsmedel</button>` : "";
   const other = meals.otherMain(week.days[d], m.slot);
@@ -519,12 +531,23 @@ export function bindMeals(el, { start, target, rerender, failed }) {
       addFor = null;
       openMeals.add(key);
       const n = week().days[+day]?.meals.find((x) => x.slot === slot)?.add?.length ?? 0;
-      save(meals.addFood(week(), +day, slot, f, foods.pieceGrams(f.name)), `[data-add-amt="${n}"][data-day="${day}"][data-slot="${slot}"]`);
+      save(meals.addFood(week(), +day, slot, f, foods.measureOf(f)), `[data-add-amt="${n}"][data-day="${day}"][data-slot="${slot}"]`);
     }
     else if (act === "add-step") {
       const ing = +btn.dataset.ing, dir = +btn.dataset.dir;
       save(meals.stepAdd(week(), +day, slot, ing, dir), `[data-act="add-step"][data-day="${day}"][data-slot="${slot}"][data-ing="${ing}"][data-dir="${dir}"]:not(:disabled)`);
     }
+    else if (act === "ing-remove") {
+      openMeals.add(key);
+      const ing = +btn.dataset.ing;
+      save(meals.setAmount(week(), +day, slot, ing, 0), `[data-act="ing-restore"][data-day="${day}"][data-slot="${slot}"][data-ing="${ing}"]`);
+    }
+    else if (act === "ing-restore") {
+      openMeals.add(key);
+      const ing = +btn.dataset.ing;
+      save(meals.restoreIngredient(week(), +day, slot, ing), `[data-act="ing-remove"][data-day="${day}"][data-slot="${slot}"][data-ing="${ing}"]`);
+    }
+    else if (act === "ing-swap") { addFor = key; openMeals.add(key); rerender(); el.querySelector("#a-search")?.focus(); }
     else if (act === "add-remove") save(meals.setAddAmount(week(), +day, slot, +btn.dataset.ing, 0), sel("add-open"));
     else if (act === "tweak") {
       const ing = +btn.dataset.ing, dir = +btn.dataset.dir;

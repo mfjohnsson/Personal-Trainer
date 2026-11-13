@@ -198,6 +198,27 @@ const w = meals.generateWeek("2026-11-09", T);
   assert.equal(typed.days[3].meals[1].add[0].amount, 250);
   const gone = meals.setAddAmount(typed, 3, "lunch", 0, 0);
   assert.equal(gone.days[3].meals[1].add, undefined, "0 takes it away");
+  // Poured: a light beer in cl, one bottle per step; milk in dl.
+  const beer = { nummer: 1901, name: "Öl lättöl vol. % 2,3", kcal: 28, protein: 0.3, fat: 0, carbs: 3 };
+  const b1 = meals.addFood(w, 3, "lunch", beer, { unit: "cl", gpu: 10, amount: 33, step: 33 });
+  const bb = b1.days[3].meals[1].add[0];
+  assert.equal(bb.unit, "cl"); assert.equal(bb.amount, 33);
+  assert.ok(Math.abs(meals.mealInfo(b1.days[3].meals[1]).kcal - meals.mealInfo(w.days[3].meals[1]).kcal - 92) <= 1, "33 cl = 330 g");
+  assert.equal(meals.stepAdd(b1, 3, "lunch", 0, 1).days[3].meals[1].add[0].amount, 66);
+  assert.ok(meals.isWeek(b1));
+  const milk = { nummer: 123, name: "Mjölk fett 3%", kcal: 60, protein: 3.5, fat: 3, carbs: 5 };
+  const m1 = meals.addFood(w, 3, "lunch", milk, { unit: "dl", gpu: 103, amount: 2 });
+  assert.equal(m1.days[3].meals[1].add[0].unit, "dl");
+  assert.equal(meals.stepAdd(m1, 3, "lunch", 0, 1).days[3].meals[1].add[0].amount, 2.5);
+  assert.equal(meals.setAddAmount(m1, 3, "lunch", 0, 1.25).days[3].meals[1].add[0].amount, 1.3);
+  // An ingredient left out of one meal, then put back; the dish is not changed.
+  const lunch0 = w.days[3].meals[1];
+  const side = meals.dishOf(lunch0.dish).ingredients.length - 1;
+  const off = meals.setAmount(w, 3, "lunch", side, 0);
+  assert.equal(meals.mealInfo(off.days[3].meals[1]).ingredients[side].amount, 0);
+  const back = meals.restoreIngredient(off, 3, "lunch", side);
+  assert.equal(back.days[3].meals[1].tweak[side], 1);
+  assert.equal(meals.mealInfo(back.days[3].meals[1]).ingredients[side].amount, meals.mealInfo(lunch0).ingredients[side].amount);
   const reset = meals.resetMeal(a1, 3, "frukost");
   assert.equal(reset.days[3].meals[0].add.length, 1, "the app's amounts again, your banana stays");
   assert.ok(!reset.days[3].meals[0].fixed);

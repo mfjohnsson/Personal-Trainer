@@ -423,7 +423,7 @@ function partsOf(m, d) {
   return { p, s };
 }
 
-// Foods you added to one meal in the day view: meal.add = [{ name, nummer, amount, unit: "g" | "st", gpu
+// Foods you added to one meal in the day view: meal.add = [{ name, nummer, amount, unit: "g" | "st" | "dl" | "cl", gpu, step?
 // (grams per unit), kcal, protein, fat, carbs (per 100 g) }]. They are not scaled: you set the amount.
 export const ADD_MAX = 8;
 const addsOf = (m) => (Array.isArray(m.add) ? m.add : []);
@@ -937,6 +937,13 @@ export function setAmount(week, d, slot, ing, amount) {
   return withMeal(week, d, i, { ...rest, tweak, fixed: true });
 }
 
+// Puts a left-out ingredient (or one you changed) back at the app's amount. The dish itself is not changed.
+export function restoreIngredient(week, d, slot, ing) {
+  const x = dishMeal(week, d, slot);
+  if (!x || !(ing >= 0 && ing < x.dd.ingredients.length)) return null;
+  return setAmount(week, d, slot, ing, amountAtOne(x.m, x.dd, ing));
+}
+
 // One ingredient more or less: to the next whole step (10 g, one piece, half a dl; 25 % for other units).
 export function tweakIngredient(week, d, slot, ing, dir) {
   const x = dishMeal(week, d, slot);
@@ -952,16 +959,20 @@ export function tweakIngredient(week, d, slot, ing, dir) {
 }
 
 // --- Foods you add to a meal ---
-// `food` = { nummer, name, kcal, protein, fat, carbs } per 100 g; `gpu` grams per piece for foods you count
-// (eggs, bananas), else weighed in grams.
-export const ADD_STEP = { g: 10, st: 1 };
-export function addFood(week, d, slot, food, gpu = null) {
+// `food` = { nummer, name, kcal, protein, fat, carbs } per 100 g. `measure` = { unit, gpu, amount } for foods
+// counted or poured (eggs in st, beer in cl, milk in dl; see foods.measureOf), or a number = grams per piece;
+// anything else is weighed in grams.
+export const ADD_STEP = { g: 10, st: 1, dl: 0.5, cl: 5 };
+export const ADD_UNITS = ["g", "st", "dl", "cl"];
+export function addFood(week, d, slot, food, measure = null) {
   const x = dishMeal(week, d, slot);
   if (!x || !food || addsOf(x.m).length >= ADD_MAX || ![food.kcal, food.protein, food.fat, food.carbs].every(finite)) return null;
-  const counted = finite(gpu) && gpu > 0;
+  const ms = finite(measure) ? { unit: "st", gpu: measure, amount: 1 } : measure;
+  const counted = isObject(ms) && ADD_UNITS.includes(ms.unit) && ms.unit !== "g" && finite(ms.gpu) && ms.gpu > 0 && finite(ms.amount) && ms.amount > 0;
   const item = {
-    name: food.name, nummer: food.nummer, unit: counted ? "st" : "g", gpu: counted ? gpu : 1,
-    amount: counted ? 1 : Math.max(10, Math.round(defaultGrams(food) / 10) * 10),
+    name: food.name, nummer: food.nummer, unit: counted ? ms.unit : "g", gpu: counted ? ms.gpu : 1,
+    amount: counted ? ms.amount : Math.max(10, Math.round(defaultGrams(food) / 10) * 10),
+    ...(counted && finite(ms.step) && ms.step > 0 ? { step: ms.step } : {}),
     kcal: food.kcal, protein: food.protein, fat: food.fat, carbs: food.carbs,
   };
   return withMeal(week, d, x.i, { ...x.m, add: [...addsOf(x.m), item], fixed: true });
@@ -971,7 +982,8 @@ export function setAddAmount(week, d, slot, j, amount) {
   const x = dishMeal(week, d, slot);
   const list = x ? addsOf(x.m) : [];
   if (!x || !(j >= 0 && j < list.length) || !(finite(amount) && amount >= 0 && amount <= 5000)) return null;
-  const rounded = list[j].unit === "st" ? Math.round(amount * 2) / 2 : Math.round(amount);
+  const unit = list[j].unit;
+  const rounded = unit === "st" ? Math.round(amount * 2) / 2 : unit === "dl" ? Math.round(amount * 10) / 10 : Math.round(amount);
   const next = rounded > 0 ? list.map((a, k) => (k === j ? { ...a, amount: rounded } : a)) : list.filter((_, k) => k !== j);
   const { add: _a, ...rest } = x.m;
   return withMeal(week, d, x.i, { ...rest, ...(next.length ? { add: next } : {}), fixed: true });
@@ -980,7 +992,7 @@ export function stepAdd(week, d, slot, j, dir) {
   const x = dishMeal(week, d, slot);
   const a = x ? addsOf(x.m)[j] : null;
   if (!a) return null;
-  const step = ADD_STEP[a.unit] ?? 10;
+  const step = finite(a.step) && a.step > 0 ? a.step : ADD_STEP[a.unit] ?? 10;
   const next = dir > 0 ? Math.floor(a.amount / step + 1e-6) * step + step : Math.ceil(a.amount / step - 1e-6) * step - step;
   return setAddAmount(week, d, slot, j, Math.max(0, next));
 }
@@ -1212,8 +1224,9 @@ export function validateCustom(raw) {
 
 // --- Stored weeks ---
 const validShare = (v) => finite(v) && v >= 0 && v <= 2 && Math.abs(v * 4 - Math.round(v * 4)) < 1e-9;
-const validAdd = (a) => isObject(a) && typeof a.name === "string" && a.name !== "" && (a.unit === "g" || a.unit === "st")
-  && [a.amount, a.gpu, a.kcal, a.protein, a.fat, a.carbs].every(finite) && a.amount > 0 && a.gpu > 0;
+const validAdd = (a) => isObject(a) && typeof a.name === "string" && a.name !== "" && ADD_UNITS.includes(a.unit)
+  && [a.amount, a.gpu, a.kcal, a.protein, a.fat, a.carbs].every(finite) && a.amount > 0 && a.gpu > 0
+  && (a.step === undefined || (finite(a.step) && a.step > 0));
 const validMeal = (m) => isObject(m) && DISH_SLOTS.includes(m.slot) && typeof m.dish === "string" && finite(m.portion)
   && (m.side === undefined || finite(m.side))
   && (m.custom === undefined || (isObject(m.custom) && finite(m.custom.kcal) && finite(m.custom.protein)))
