@@ -80,10 +80,9 @@ function prepHtml(week, from) {
 
 const dishNameOrder = new Intl.Collator("sv");
 
-function planOptionsHtml(options, meal) {
-  const optionHtml = (dish) => `<option value="${esc(dish.id)}"${dish.id === meal.dish ? " selected" : ""}>${esc(dish.name)}</option>`;
-  if (meal.slot !== "lunch" && meal.slot !== "middag") return options.map(optionHtml).join("");
+const isMainSlot = (slot) => slot === "lunch" || slot === "middag";
 
+function dishGroups(options) {
   const groups = new Map();
   for (const dish of options) {
     const [category] = dishes.categoriesOf(dish);
@@ -97,8 +96,79 @@ function planOptionsHtml(options, meal) {
   }
 
   return [...groups].sort(([a], [b]) => dishNameOrder.compare(a, b)).map(([label, group]) =>
-    `<optgroup label="${esc(label)}">${group.sort((a, b) => dishNameOrder.compare(a.name, b.name)).map(optionHtml).join("")}</optgroup>`
-  ).join("");
+    [label, group.sort((a, b) => dishNameOrder.compare(a.name, b.name))]
+  );
+}
+
+function offeredDishes(day, meal) {
+  const other = meals.otherMain(day, meal.slot);
+  const offered = meals.DISHES[meal.slot].filter((dish) => dish.id !== other);
+  const current = meals.dishOf(meal.dish);
+  return current && !offered.some((dish) => dish.id === current.id) ? [...offered, current] : offered;
+}
+
+function openDishPicker(day, meal, dayLabel, save) {
+  const groups = dishGroups(offeredDishes(day, meal));
+  const slot = meals.slotLabel(meal.slot);
+  const dialog = document.createElement("dialog");
+  dialog.className = "food-dialog dish-picker";
+  dialog.setAttribute("aria-label", `Välj rätt för ${slot.toLowerCase()} på ${dayLabel.toLowerCase()}`);
+  dialog.innerHTML = `<header class="dish-picker-header">
+    <div><p class="note">${dayLabel} · ${slot}</p><h2>Välj rätt</h2></div>
+    <button type="button" class="btn-secondary" data-close>Stäng</button>
+  </header>
+  <label class="field">Sök rätt<input type="search" placeholder="Sök på namn"></label>
+  <div class="dish-filters" role="group" aria-label="Kategorier">
+    <button type="button" data-group="-1" aria-pressed="true">Alla</button>
+    ${groups.map(([label], i) => `<button type="button" data-group="${i}" aria-pressed="false">${esc(label)}</button>`).join("")}
+  </div>
+  <p class="field-error" role="alert" hidden></p>
+  <div class="dish-picker-results"></div>`;
+
+  const search = dialog.querySelector("input");
+  const results = dialog.querySelector(".dish-picker-results");
+  const error = dialog.querySelector("[role=alert]");
+  let active = -1;
+  let afterClose;
+  function renderResults() {
+    const query = search.value.trim().toLocaleLowerCase("sv");
+    results.innerHTML = groups.map(([label, group], i) => {
+      if (active !== -1 && active !== i) return "";
+      const matches = group.filter((dish) => dish.name.toLocaleLowerCase("sv").includes(query));
+      if (!matches.length) return "";
+      return `<section><h3>${esc(label)}</h3>${matches.map((dish) => `
+        <button type="button" class="dish-choice" data-dish="${esc(dish.id)}"${dish.id === meal.dish ? ' aria-current="true"' : ""}>
+          <span>${esc(dish.name)}</span>${dish.id === meal.dish ? '<span class="dish-choice-state">✓ Vald</span>' : ""}
+        </button>`).join("")}</section>`;
+    }).join("") || '<p class="note">Inga rätter matchar sökningen.</p>';
+    results.scrollTop = 0;
+  }
+
+  search.addEventListener("input", renderResults);
+  dialog.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    if (button.hasAttribute("data-close")) return dialog.close();
+    if (button.dataset.group !== undefined) {
+      dialog.querySelector('[aria-pressed="true"]').setAttribute("aria-pressed", "false");
+      button.setAttribute("aria-pressed", "true");
+      active = Number(button.dataset.group);
+      renderResults();
+    }
+    if (button.dataset.dish === undefined) return;
+    if (button.dataset.dish === meal.dish) return dialog.close();
+    afterClose = save(button.dataset.dish);
+    if (afterClose) return dialog.close();
+    error.textContent = "Kunde inte byta rätt. Försök igen.";
+    error.hidden = false;
+  });
+  dialog.addEventListener("close", () => {
+    dialog.remove();
+    afterClose?.();
+  }, { once: true });
+  renderResults();
+  document.body.append(dialog);
+  dialog.showModal();
 }
 
 // "Planera veckan": every day of the week with its meals and its top-up as pickers. Meals you skipped or
@@ -107,18 +177,23 @@ function planWeekHtml(week, from) {
   return week.days.map((day, d) => {
     if (d < from) return "";
     const t = meals.dayTotals(day);
-    const rows = day.meals.map((m, i) => {
+    const rows = day.meals.map((m) => {
       const info = meals.mealInfo(m);
       const label = `<span class="pick-label">${meals.slotLabel(m.slot)}</span>`;
       if (meals.dayOver(week, d) || info.custom || meals.isSkipped(m) || !meals.DISHES[m.slot]) {
         return `<div class="plan-row">${label}<span class="plan-fixed">${esc(info.name)}${meals.isSkipped(m) ? " (åt inte)" : ""}</span></div>`;
       }
-      const other = meals.otherMain(day, m.slot);
-      const offered = meals.DISHES[m.slot].filter((o) => o.id !== other);
-      const options = offered.some((o) => o.id === m.dish) ? offered : [...offered, meals.dishOf(m.dish)];
+      if (isMainSlot(m.slot)) {
+        return `<div class="plan-row">${label}
+          <button type="button" class="plan-dish-button" id="pick-${d}-${m.slot}" data-act="pick-dish" data-day="${d}" data-slot="${m.slot}"
+            aria-label="${meals.slotLabel(m.slot)} ${plan.DAYS[d].toLowerCase()}: ${esc(info.name)}. Byt rätt" aria-haspopup="dialog">
+            <span>${esc(info.name)}</span><span class="plan-dish-action" aria-hidden="true">Byt ›</span>
+          </button></div>`;
+      }
+      const options = offeredDishes(day, m);
       return `<div class="plan-row"><label class="pick-label" for="pick-${d}-${m.slot}">${meals.slotLabel(m.slot)}</label>
         <select class="pick" id="pick-${d}-${m.slot}" data-day="${d}" data-slot="${m.slot}">
-          ${planOptionsHtml(options, m)}
+          ${options.map((dish) => `<option value="${esc(dish.id)}"${dish.id === m.dish ? " selected" : ""}>${esc(dish.name)}</option>`).join("")}
         </select></div>`;
     }).join("");
     const info = meals.extrasInfo(day);
@@ -176,7 +251,6 @@ export function mount(el) {
     const from = isNext() ? 0 : todayIdx;
     return `<section class="card">
         <h2><span class="dot" style="background: var(--c-midja)"></span>Planera ${isNext() ? "nästa vecka" : "veckan"} <span class="count">${rangeText(startOf())}</span></h2>
-        <p class="status-line">Välj rätt och påfyllning för varje dag. Mängderna räknas om så att dagen når målet.</p>
         <button class="btn-primary" type="button" data-act="plan-done">Klar</button>
       </section>${planWeekHtml(week, from)}
       <button class="btn-primary plan-done-end" type="button" data-act="plan-done">Klar</button>`;
@@ -261,6 +335,20 @@ export function mount(el) {
       mealui.closePanels();
       render();
       root.querySelector(`[data-act="goto"][data-day="${d}"]`)?.focus({ preventScroll: true });
+    } else if (act === "pick-dish") {
+      const d = Number(btn.dataset.day), slot = btn.dataset.slot;
+      const start = startOf();
+      const day = mealplan.weekMeals(start, target).days[d];
+      const meal = day.meals.find((item) => item.slot === slot);
+      openDishPicker(day, meal, plan.DAYS[d], (id) => {
+        mealplan.tick();
+        const changed = meals.changeDish(mealplan.weekMeals(start, target), d, slot, id);
+        if (!changed || !mealplan.saveWeek(changed)) return null;
+        return () => {
+          render();
+          root.querySelector(`#pick-${d}-${slot}`)?.focus({ preventScroll: true });
+        };
+      });
     } else if (act === "plan" || act === "plan-done") {
       planning = act === "plan";
       mealui.closePanels();

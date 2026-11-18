@@ -550,6 +550,56 @@ details.prep > .note { margin: 0 0 12px; }
 .plan-day .day-pass { font-size: 0.85rem; font-weight: 500; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .plan-row { display: grid; gap: 2px; margin-top: 8px; }
 .plan-row .pick { width: 100%; }
+.plan-dish-button, .dish-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.plan-dish-action, .dish-choice-state {
+  flex: none;
+  color: var(--c-vikt);
+  font-size: 0.85rem;
+}
+.dish-picker {
+  width: min(520px, calc(100% - 24px));
+  height: min(620px, calc(100% - 24px));
+  padding: clamp(12px, 4vw, 20px);
+  background: var(--card);
+}
+.dish-picker[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dish-picker-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dish-picker-header h2 { font-size: 1.25rem; }
+.dish-picker-header .btn-secondary { min-height: 44px; }
+.dish-picker .dish-filters {
+  flex: none;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  margin: 0;
+  padding: 4px;
+}
+.dish-picker .dish-filters button { flex: none; white-space: nowrap; }
+.dish-picker-results { min-height: 112px; overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+.dish-picker-results section + section { margin-top: 16px; }
+.dish-picker-results h3 { margin: 0 0 6px; font-size: 0.9rem; color: var(--ink-2); }
+.dish-choice { width: 100%; margin-bottom: 6px; }
+.dish-choice[aria-current] { border-color: var(--c-vikt); }
+.plan-dish-button:hover, .dish-choice:hover { border-color: var(--c-vikt); }
 .plan-fixed { font-weight: 600; color: var(--ink-2); padding: 8px 0; }
 .plan-done-end { width: 100%; margin-top: 4px; }
 details.card.day { scroll-margin-top: 12px; }
