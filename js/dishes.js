@@ -2,11 +2,48 @@
 // Storage shape: { items: { [id]: { slot, name, kcal, protein, fat, carbs, ingredients, meals?, kind? } },
 //   visible: { [id]: boolean }, deleted?: { [id]: item }, topup?: id, topup2?: id }.
 // Older data has `removed: { [id]: true }`; such dishes are simply switched off (see init).
-import { get, setMany } from "./store.js";
+import { get, set, setMany } from "./store.js";
 import * as meals from "./meals.js";
 import * as foods from "./foods.js";
 
 const isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+
+const categorySettings = () => get("dishCategorySettings") ?? {};
+export const categories = () => categorySettings().categories ?? meals.DISH_CATEGORIES;
+export const categoryChoice = (id) => categorySettings().choices?.[id] ?? "";
+
+export function categoriesOf(dish) {
+  const chosen = categoryChoice(dish.id);
+  const ids = chosen ? [chosen] : meals.dishCategories(dish);
+  const available = categories().filter((category) => ids.includes(category.id));
+  return available.length ? available : [{ id: "utan", label: "Utan kategori" }];
+}
+
+export function saveCategory(id, name) {
+  name = name.trim();
+  const list = categories();
+  if (!name || name.length > 35 || /^(alla|utan kategori|automatiskt)$/i.test(name)) return "Välj ett annat namn med 1–35 tecken.";
+  if (list.some((category) => category.id !== id && category.label.toLocaleLowerCase("sv") === name.toLocaleLowerCase("sv"))) {
+    return "Det finns redan en kategori med det namnet.";
+  }
+  const next = id ? list.map((category) => category.id === id ? { ...category, label: name } : category)
+    : [...list, { id: `kategori-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`, label: name }];
+  return set("dishCategorySettings", { ...categorySettings(), categories: next }) ? null : "Kunde inte spara kategorin.";
+}
+
+export function deleteCategory(id) {
+  const choices = Object.fromEntries(Object.entries(categorySettings().choices ?? {}).map(([dish, current]) =>
+    [dish, current === id ? "utan" : current]));
+  return set("dishCategorySettings", { choices, categories: categories().filter((category) => category.id !== id) });
+}
+
+export function moveDish(id, category) {
+  if (!meals.isListed(id) || (category && category !== "utan" && !categories().some((item) => item.id === category))) return false;
+  const choices = { ...categorySettings().choices };
+  if (category) choices[id] = category;
+  else delete choices[id];
+  return set("dishCategorySettings", { ...categorySettings(), choices });
+}
 
 // Applies the stored catalog. With the food database loaded each ingredient is classed as protein or side.
 export function init() {
@@ -53,6 +90,17 @@ export function saveDish(id, slot, values, replace) {
   const dishId = id ?? `egen-${Date.now().toString(36)}`;
   const next = { ...cur, items: { ...cur.items, [dishId]: { slot, ...values } } };
   return commit(next, new Set([dishId]), replace) ? dishId : null;
+}
+
+export function saveMealAsDish(slot, values, week, dayIndex, mealSlot) {
+  const previous = get("dishes") ?? {};
+  const id = `egen-${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`;
+  const next = { ...previous, items: { ...previous.items, [id]: { slot, ...values } } };
+  meals.applyDishes(next);
+  const updated = meals.useSavedRecipe(week, dayIndex, mealSlot, id);
+  if (updated && setMany({ dishes: next, meals: { ...get("meals"), [week.start]: updated } })) return id;
+  meals.applyDishes(previous);
+  return null;
 }
 
 export function updateFromMeal(id, values, currentWeek, dayIndex, slot) {

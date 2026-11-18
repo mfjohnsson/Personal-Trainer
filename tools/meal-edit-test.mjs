@@ -6,9 +6,13 @@ import * as dishes from "../js/dishes.js";
 import { get } from "../js/store.js";
 
 const storage = new Map();
+let refuseWrites = false;
 Object.defineProperty(globalThis, "localStorage", { value: {
   getItem: (key) => storage.get(key),
-  setItem: (key, value) => storage.set(key, value),
+  setItem: (key, value) => {
+    if (refuseWrites) throw new Error("Storage unavailable");
+    storage.set(key, value);
+  },
 } });
 const db = JSON.parse(fs.readFileSync(new URL("../data/livsmedel.json", import.meta.url), "utf8"));
 foods.setData(db);
@@ -21,8 +25,32 @@ foods.setData(db);
 assert.equal(foods.lookup("kvarngryn")[0].nummer, own.nummer);
 
 dishes.init();
+assert.deepEqual(meals.dishCategories(meals.dishOf("lunch-notfars")), ["kott"]);
+assert.deepEqual(meals.dishCategories(meals.dishOf("lunch-kyckling")), ["kyckling"]);
+assert.deepEqual(meals.dishCategories(meals.dishOf("snabb-tonfisk")), ["fisk", "snabb"]);
+assert.deepEqual(meals.dishCategories(meals.dishOf("snabb-makrill")), ["fisk", "snabb"]);
+assert.deepEqual(meals.dishCategories(meals.dishOf("snabb-keso")), ["ovrigt", "snabb"]);
+assert.deepEqual(meals.dishCategories({ name: "Kikärtsbiffar", ingredients: [["Kikärter"]] }), ["ovrigt"]);
 const week = meals.generateWeek("2026-11-16", { kcal: 2200, protein: 160 });
 const breakfast = (w, day) => w.days[day].meals.find((meal) => meal.slot === "frukost");
+const egg = foods.foodByNumber(2205);
+const beef = foods.foodByNumber(951);
+assert.equal(foods.measureOf(egg).unit, "st");
+assert.equal(foods.measureOf(beef), null);
+assert.equal(foods.gramsOf(2, "st", egg.name).grams, 120);
+const eggSwap = meals.replaceIngredient(week, 1, "frukost", 0, egg, 2);
+assert.equal(meals.mealInfo(breakfast(eggSwap, 1)).ingredients.at(-1).unit, "st");
+assert.equal(meals.mealInfo(breakfast(eggSwap, 1)).ingredients.at(-1).amount, 2);
+const legacy = { ...breakfast(eggSwap, 1), add: [{ ...breakfast(eggSwap, 1).add[0], unit: "g", gpu: 1, amount: 120 }] };
+assert.deepEqual(meals.mealInfo(legacy), meals.mealInfo(breakfast(eggSwap, 1)));
+const half = { ...week, days: week.days.map((day, i) => i === 1
+  ? { ...day, meals: day.meals.map((meal) => meal.slot === "frukost" ? { ...meal, ate: 0.5 } : meal) }
+  : day) };
+const halfSwap = meals.replaceIngredient(half, 1, "frukost", 0, egg, 1);
+const halfMore = meals.stepAdd(halfSwap, 1, "frukost", 0, 1);
+assert.equal(meals.mealInfo(breakfast(halfMore, 1)).ingredients.at(-1).amount, 2);
+const beefSwap = meals.replaceIngredient(week, 1, "frukost", 0, beef, 120);
+assert.equal(meals.mealInfo(breakfast(beefSwap, 1)).ingredients.at(-1).unit, "g");
 const changed = meals.replaceIngredient(week, 1, "frukost", 0, own, 80);
 assert.ok(meals.isWeek(changed));
 const before = meals.mealInfo(breakfast(changed, 1));
@@ -47,5 +75,39 @@ assert.deepEqual(meals.mealInfo(breakfast(saved, 0)), historical);
 assert.deepEqual(meals.mealInfo(breakfast(saved, 1)), before);
 assert.equal(meals.dishOf(id).ingredients[0][0], "Kvarngryn");
 assert.equal(breakfast(saved, 2).dish, id);
-assert.ok(dishes.saveDish(null, recipe.slot, { ...values, name: "Variant" }));
+const variantIngredients = [[own.name, 83, "g", meals.categoryOf(own.name), own.nummer]];
+const variantValues = { ...values, ...foods.macrosOf(variantIngredients), name: "Variant", ingredients: variantIngredients };
+const variant = dishes.saveMealAsDish(recipe.slot, variantValues, saved, 1, "frukost");
+assert.ok(variant);
+const assigned = get("meals")[week.start];
+assert.equal(breakfast(assigned, 1).dish, variant);
+assert.equal(breakfast(assigned, 1).tweak, undefined);
+assert.equal(breakfast(assigned, 1).add, undefined);
+assert.deepEqual(meals.mealInfo(breakfast(assigned, 1)).ingredients.map((ingredient) => ingredient.name), ["Kvarngryn"]);
+assert.equal(meals.mealInfo(breakfast(assigned, 1)).ingredients[0].amount, 83);
+assert.deepEqual(assigned.days[0], saved.days[0]);
+assert.equal(meals.dishOf(id).name, recipe.name);
+assert.ok(meals.isListed(variant));
+refuseWrites = true;
+assert.equal(dishes.saveMealAsDish(recipe.slot, { ...values, name: "Osparad" }, assigned, 1, "frukost"), null);
+assert.equal(get("meals")[week.start], assigned);
+assert.ok(meals.DISHES.frukost.every((dish) => dish.name !== "Osparad"));
+refuseWrites = false;
+
+const chicken = meals.dishOf("lunch-kyckling");
+const quickFish = meals.dishOf("snabb-makrill");
+assert.equal(dishes.saveCategory("kyckling", "Fågel"), null);
+assert.deepEqual(dishes.categoriesOf(chicken), [{ id: "kyckling", label: "Fågel" }]);
+assert.equal(dishes.saveCategory(null, "Matlåda"), null);
+assert.ok(dishes.saveCategory(null, "matlåda"));
+const customCategory = dishes.categories().find((category) => category.label === "Matlåda");
+assert.ok(dishes.moveDish(chicken.id, customCategory.id));
+assert.deepEqual(dishes.categoriesOf(chicken), [customCategory]);
+assert.ok(dishes.deleteCategory(customCategory.id));
+assert.equal(dishes.categoriesOf(chicken)[0].id, "utan");
+assert.ok(dishes.moveDish(chicken.id, ""));
+assert.equal(dishes.categoriesOf(chicken)[0].id, "kyckling");
+assert.ok(dishes.deleteCategory("snabb"));
+assert.deepEqual(dishes.categoriesOf(quickFish).map((category) => category.id), ["fisk"]);
+assert.equal(meals.dishOf(quickFish.id).kind, "snabb");
 console.log("meal editing: all checks passed");

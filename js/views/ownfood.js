@@ -31,13 +31,14 @@ export function editDialog(title, body, action, submit, change = null) {
   dialog.querySelector('button[type="button"]').onclick = () => dialog.close();
   form.onsubmit = (event) => {
     event.preventDefault();
-    const message = submit(new FormData(form));
-    if (message) {
+    const result = submit(new FormData(form));
+    if (typeof result === "string" && result) {
       const error = dialog.querySelector("[role=alert]");
-      error.textContent = message;
+      error.textContent = result;
       error.hidden = false;
       return;
     }
+    if (typeof result === "function") dialog.addEventListener("close", result, { once: true });
     dialog.close();
   };
   dialog.addEventListener("close", () => dialog.remove(), { once: true });

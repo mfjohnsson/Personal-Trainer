@@ -6,11 +6,11 @@
 import * as meals from "../meals.js";
 import * as mealplan from "../mealplan.js";
 import * as foods from "../foods.js";
-import { esc } from "../html.js";
+import { actionMenu, esc } from "../html.js";
 import { createOwnFood, foodHint, editDialog } from "./ownfood.js";
 import * as dishes from "../dishes.js";
 
-const nf = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 1 });
+const nf = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 2 });
 const amount = (i) => `${nf.format(i.amount)} ${i.unit}`;
 const signed = (v) => (v > 0 ? `+${nf.format(v)}` : v < 0 ? `−${nf.format(-v)}` : "0");
 
@@ -39,7 +39,7 @@ function rowGrams(r) {
   const f = foods.foodByNumber(r.nummer);
   if (!Number.isFinite(r.amount)) return 0;
   if (foods.isDrink(f)) return r.amount * r.unit * 10;
-  return r.unit === "portion" ? r.amount * portionGrams(f) : r.amount;
+  return r.unit === "portion" ? r.amount * portionGrams(f) : foods.gramsOf(r.amount, r.unit, f.name).grams;
 }
 
 function customMacros() {
@@ -54,11 +54,12 @@ function customMacros() {
 
 // A stored row is only used again if it still makes sense.
 const validRow = (r) => !!r && Number.isInteger(r.nummer) && Number.isFinite(r.amount) && r.amount > 0
-  && (r.unit === "portion" || r.unit === "g" || Number.isFinite(r.unit)) && (r.abv === undefined || Number.isFinite(r.abv));
+  && (["portion", "g", "st", "dl"].includes(r.unit) || Number.isFinite(r.unit)) && (r.abv === undefined || Number.isFinite(r.abv));
 
 function newRow(f) {
   if (foods.isDrink(f)) return { nummer: f.nummer, amount: 1, unit: foods.drinkSize(f), abv: foods.abvOf(f) || undefined };
-  return { nummer: f.nummer, amount: 1, unit: "portion" };
+  const measure = foods.measureOf(f);
+  return { nummer: f.nummer, amount: measure?.amount ?? meals.defaultGrams(f), unit: measure?.unit ?? "g" };
 }
 
 const drinkName = (f) => f.name.replace(/ vol\. % [\d,]+/, "").replace(" (uppskattning)", "");
@@ -78,7 +79,8 @@ function calcRowHtml(r, i) {
         ${remove}
       </div></div>`;
   }
-  const units = [["portion", `portion (≈ ${portionGrams(f)} g)`], ["g", "g"]];
+  const measure = foods.measureOf(f);
+  const units = [...(measure ? [[measure.unit, measure.unit]] : []), ["g", "g"], ["portion", `portion (≈ ${portionGrams(f)} g)`]];
   return `<div class="ing-row">
     <div class="ing-name"><span class="ex-name">${esc(f.name)}</span></div>
     <div class="ing-amount">
@@ -130,16 +132,16 @@ const ingredientsText = (info) => [...info.ingredients].sort((a, b) => (a.part =
   .filter((i) => i.amount > 0).map((i) => esc(`${amount(i)} ${i.name.toLowerCase()}`)).join(" · ");
 
 // One amount you can change: − / the number (type it) / +.
-function amountRow(name, value, unit, { attrs, stepAct, inputAttr, i, canDown, canUp, remove = "" }) {
+function amountRow(name, value, unit, { attrs, stepAct, inputAttr, i, canDown, canUp, actions, note = "" }) {
   const lower = esc(name.toLowerCase());
-  return `<div class="ate-row ing-tweak"><span class="pick-label">${esc(name)}</span>
+  return `<div class="ingredient-row"><span class="pick-label">${esc(name)}${note ? `<small class="note">${esc(note)}</small>` : ""}</span>
     <span class="amt-ctl">
       <button class="icon-btn" type="button" data-act="${stepAct}" data-ing="${i}" data-dir="-1" ${attrs} aria-label="Mindre ${lower}"${canDown ? "" : " disabled"}>−</button>
       <input class="amt" type="text" inputmode="decimal" autocomplete="off" ${inputAttr}="${i}" ${attrs} value="${numText(value) || "0"}" aria-label="${esc(name)}, ${esc(unit)}">
       <span class="amt-unit">${esc(unit)}</span>
       <button class="icon-btn" type="button" data-act="${stepAct}" data-ing="${i}" data-dir="1" ${attrs} aria-label="Mer ${lower}"${canUp ? "" : " disabled"}>+</button>
-      ${remove}
     </span>
+    ${actionMenu(name, actions)}
   </div>`;
 }
 
@@ -162,29 +164,33 @@ function editHtml(week, d, m, i, planOnly) {
   const nDish = dish.ingredients.length;
   const key = `${d}:${m.slot}`;
   const canAdd = foods.isLoaded() && (m.add?.length ?? 0) < meals.ADD_MAX;
+  const additions = meals.addsOf(m);
+  const swapButton = (j, name) => `<button class="link-btn" type="button" data-act="ing-swap" data-ing="${j}" ${attrs} aria-label="Byt ut ${esc(name)}">Byt ut</button>`;
+  const restoreButton = (j) => `<button class="link-btn" type="button" data-act="ing-restore" data-ing="${j}" ${attrs}>Återställ ingrediens</button>`;
   const rows = !dish.lines ? `<p class="note">${ingredientsText(info)}</p>` : info.ingredients.map((it, j) => {
     if (it.added) {
       const k = j - nDish;
+      const source = additions[k]?.replaces;
+      const original = info.ingredients[source]?.name;
       return amountRow(it.name, it.amount, it.unit, {
         attrs, stepAct: "add-step", inputAttr: "data-add-amt", i: k, canDown: true, canUp: true,
-        remove: `<button class="icon-btn rm" type="button" data-act="add-remove" data-ing="${k}" ${attrs} aria-label="Ta bort ${esc(it.name.toLowerCase())}">✕</button>`,
+        note: original ? `Ersätter ${original.toLowerCase()}` : "",
+        actions: original ? swapButton(source, it.name) + restoreButton(source)
+          : `<button class="link-btn" type="button" data-act="add-remove" data-ing="${k}" ${attrs}>Ta bort</button>`,
       });
     }
     const t = Array.isArray(m.tweak) ? m.tweak[j] ?? 1 : 1;
     const lower = esc(it.name.toLowerCase());
-    const swap = canAdd || m.add?.some((item) => item.replaces === j)
-      ? `<button class="link-btn" type="button" data-act="ing-swap" data-ing="${j}" ${attrs} aria-label="Byt ut ${lower}">Byt ut</button>` : "";
+    const swap = canAdd ? swapButton(j, it.name) : "";
     // Left out of this meal only: swap it for something else or put it back.
     if (t === 0) {
-      return `<div class="ate-row ing-tweak ing-off"><span class="pick-label"><s>${esc(it.name)}</s> <span class="note">borttagen</span></span>
-        <span class="amt-ctl">
-          ${swap}
-          <button class="link-btn" type="button" data-act="ing-restore" data-ing="${j}" ${attrs} aria-label="Lägg tillbaka ${lower}">Tillbaka</button>
-        </span></div>`;
+      if (additions.some((item) => item.replaces === j)) return "";
+      return `<div class="ingredient-row ing-off"><span class="pick-label"><s>${esc(it.name)}</s> <small class="note">Borttagen</small></span>
+        <button class="link-btn" type="button" data-act="ing-restore" data-ing="${j}" ${attrs}>Lägg tillbaka</button>${swap ? actionMenu(it.name, swap) : ""}</div>`;
     }
     return amountRow(it.name, it.amount, it.unit, {
       attrs, stepAct: "tweak", inputAttr: "data-amt", i: j, canDown: it.amount > 0, canUp: t < meals.TWEAK_MAX,
-      remove: `${swap}<button class="icon-btn rm" type="button" data-act="ing-remove" data-ing="${j}" ${attrs} aria-label="Ta bort ${lower} från måltiden">✕</button>`,
+      actions: `${swap}<button class="link-btn" type="button" data-act="ing-remove" data-ing="${j}" ${attrs} aria-label="Ta bort ${lower} från måltiden">Ta bort</button>`,
     });
   }).join("");
   const adder = addFor === key ? addFormHtml(attrs)
@@ -201,10 +207,10 @@ function editHtml(week, d, m, i, planOnly) {
   return `<div class="edit-box">
       ${rows}
       ${adder}
-      ${meals.isTouched(m) && foods.isLoaded() ? `<div class="meal-actions">
+      ${meals.isTouched(m) && foods.isLoaded() ? `<details class="recipe-options"><summary>Receptalternativ</summary><div>
         <button type="button" class="link-btn" data-act="recipe-copy" ${attrs}>Spara som ny rätt</button>
         ${meals.isListed(m.dish) ? `<button type="button" class="link-btn" data-act="recipe-update" ${attrs}>Uppdatera grundreceptet</button>` : ""}
-      </div>` : ""}
+      </div></details>` : ""}
       <p class="note macros">Fett ${info.fat} g · Kolhydrater ${info.carbs} g</p>
     </div>
     ${picker}
@@ -463,8 +469,9 @@ export function bindMeals(el, { start, target, rerender, failed }) {
       const i = +sel.dataset.unit, r = customRows[i], f = foods.foodByNumber(r.nummer);
       if (foods.isDrink(f)) r.unit = Number(sel.value);
       else {
-        const gr = portionGrams(f);
-        if (Number.isFinite(r.amount)) r.amount = sel.value === "g" ? Math.round(r.amount * gr) : Math.round((r.amount / gr) * 10) / 10;
+        const grams = rowGrams(r);
+        const per = sel.value === "portion" ? portionGrams(f) : foods.gramsOf(1, sel.value, f.name).grams;
+        if (Number.isFinite(r.amount)) r.amount = Math.round(grams / per * 100) / 100;
         r.unit = sel.value;
         const input = el.querySelector(`[data-amount="${i}"]`);
         if (input) input.value = numText(r.amount);
@@ -552,12 +559,16 @@ export function bindMeals(el, { start, target, rerender, failed }) {
         const previous = meals.mealInfo(meal);
         const ingredient = previous.ingredients[index];
         const previousDay = meals.dayTotals(current.days[+day]);
-        const replaced = meal.add?.find((item) => item.replaces === index);
-        const grams = replaced ? Math.round(replaced.amount * (meal.ate ?? 1)) : ingredient.amount
+        const replaced = meals.addsOf(meal).find((item) => item.replaces === index);
+        const grams = replaced ? replaced.amount * replaced.gpu * (meal.ate ?? 1) : ingredient.amount
           ? Math.round(foods.gramsOf(ingredient.amount, ingredient.unit, ingredient.name).grams) : meals.defaultGrams(food);
-        const candidate = (data) => meals.replaceIngredient(current, +day, slot, index, food, num(data.get("grams")));
+        const measure = foods.measureOf(food);
+        const unit = measure?.unit ?? "g";
+        const initial = unit === "st" ? Math.max(1, Math.round(grams / measure.gpu))
+          : measure ? Math.max(0.1, Math.round(grams / measure.gpu * 10) / 10) : Math.max(1, Math.round(grams));
+        const candidate = (data) => meals.replaceIngredient(current, +day, slot, index, food, num(data.get("amount")));
         editDialog("Byt ingrediens", `<p>${esc(ingredient.name)} → ${esc(food.name)}</p>
-          <label class="field">Mängd (g) <input name="grams" type="number" min="1" max="5000" value="${grams}" required></label>
+          <label class="field">Mängd (${unit}) <input name="amount" type="number" min="${measure ? 0.01 : 1}" max="${5000 / (measure?.gpu ?? 1)}" step="any" value="${initial}" required></label>
           <p class="note" aria-live="polite" data-impact></p>`, "Byt i måltiden", (data) => {
           const next = candidate(data);
           if (!next) return "Kontrollera mängden.";
@@ -582,20 +593,21 @@ export function bindMeals(el, { start, target, rerender, failed }) {
       const dish = meals.dishOf(meal.dish);
       const ingredients = meals.mealInfo(meal).ingredients.flatMap((item, i) => {
         if (item.amount <= 0) return [];
-        const extra = item.added ? meal.add[i - dish.ingredients.length] : null;
-        if (extra) return [[item.name, extra.amount * (meal.ate ?? 1) * extra.gpu, "g", item.category, extra.nummer]];
+        const extra = item.added ? meals.addsOf(meal)[i - dish.ingredients.length] : null;
+        if (extra) return [[item.name, extra.amount * (meal.ate ?? 1), extra.unit, item.category, extra.nummer]];
         return [[item.name, item.amount, item.unit, item.category, dish.ingredients[i][4]]];
       });
       const copy = act === "recipe-copy";
       const title = copy ? "Spara som ny rätt" : "Uppdatera grundreceptet";
       const name = copy ? (dish.name.slice(0, 50) + " – variant") : dish.name;
-      const body = copy ? `<label class="field">Namn <input name="name" required maxlength="60" value="${esc(name)}"></label>`
+      const body = copy ? `<label class="field">Namn <input name="name" required maxlength="60" value="${esc(name)}"></label>
+        <p>Rätten sparas i Rätter och används i den här måltiden.</p>`
         : "<p>Ingredienserna och mängderna i den här måltiden blir grundreceptet för kommande måltider. Tidigare måltider behåller sina recept.</p>";
       editDialog(title, body, title, (data) => {
         const macros = foods.macrosOf(ingredients);
         const { values, errors } = meals.validateDish({ ...dish, ...macros, name: data.get("name") ?? name, ingredients, auto: false }, dish.slot);
         if (errors.name || errors.ingredients) return errors.name || errors.ingredients;
-        const ok = copy ? dishes.saveDish(null, dish.slot, values) : dishes.updateFromMeal(dish.id, values, current, +day, slot);
+        const ok = copy ? dishes.saveMealAsDish(dish.slot, values, current, +day, slot) : dishes.updateFromMeal(dish.id, values, current, +day, slot);
         if (!ok) return "Kunde inte spara receptet.";
         rerender();
         el.querySelector(`[data-meal="${key}"] > summary`)?.focus();
@@ -613,7 +625,7 @@ export function bindMeals(el, { start, target, rerender, failed }) {
     else if (act === "ing-restore") {
       openMeals.add(key);
       const ing = +btn.dataset.ing;
-      save(meals.restoreIngredient(week(), +day, slot, ing), `[data-act="ing-remove"][data-day="${day}"][data-slot="${slot}"][data-ing="${ing}"]`);
+      save(meals.restoreIngredient(week(), +day, slot, ing), `[data-amt="${ing}"][data-day="${day}"][data-slot="${slot}"]`);
     }
     else if (act === "ing-swap") { swapIndex = +btn.dataset.ing; addFor = key; openMeals.add(key); rerender(); el.querySelector("#a-search")?.focus(); }
     else if (act === "add-remove") save(meals.setAddAmount(week(), +day, slot, +btn.dataset.ing, 0), sel("add-open"));

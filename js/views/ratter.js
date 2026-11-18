@@ -5,8 +5,8 @@ import * as dishes from "../dishes.js";
 import * as foods from "../foods.js";
 import * as mealplan from "../mealplan.js";
 import { todayIso } from "./training.js";
-import { esc } from "../html.js";
-import { createOwnFood, foodHint } from "./ownfood.js";
+import { actionMenu, esc } from "../html.js";
+import { createOwnFood, editDialog, foodHint } from "./ownfood.js";
 
 export const title = "Rätter";
 
@@ -19,17 +19,21 @@ const mealsTag = (d) => (meals.MAIN.includes(d.slot) && d.meals.length === 1 ? (
 
 function rowHtml(d) {
   const shown = meals.isVisible(d.id);
-  const kind = meals.MAIN.includes(d.slot) ? meals.KINDS.find((k) => k.id === d.kind)?.label : null;
-  const tags = [kind, !meals.isBuiltIn(d.id) && "Egen", isEdited(d.id) && "Ändrad", mealsTag(d)].filter(Boolean);
+  const isMain = meals.MAIN.includes(d.slot);
+  const labels = isMain ? dishes.categoriesOf(d).filter((item) => item.id !== category).map((item) => item.label) : [];
+  const tags = [...labels, !meals.isBuiltIn(d.id) && "Egen", isEdited(d.id) && "Ändrad", mealsTag(d)].filter(Boolean);
   const block = shown ? dishes.offBlock(d.id) : null;
   return `<div class="dish-row${shown ? "" : " is-off"}">
     <button class="switch" type="button" role="switch" aria-checked="${shown}" data-act="${shown ? "hide" : "show"}" data-id="${esc(d.id)}"
       aria-label="Använd ${esc(d.name)}"${block ? ` disabled title="${esc(block)}"` : ""}></button>
     <div class="dish-main">
-      <span class="ex-name">${esc(d.name)}</span>${tags.map((t) => `<span class="badge">${t}</span>`).join("")}
+      <span class="ex-name">${esc(d.name)}</span>${tags.map((t) => `<span class="badge">${esc(t)}</span>`).join("")}
       <p class="note">${d.kcal} kcal · ${d.protein} g protein per portion</p>
     </div>
-    <button class="link-btn" type="button" data-act="edit" data-id="${esc(d.id)}" aria-label="Ändra ${esc(d.name)}">Ändra</button>
+    ${actionMenu(d.name, `
+      <button class="link-btn" type="button" data-act="edit" data-id="${esc(d.id)}" aria-label="Ändra ${esc(d.name)}">Ändra</button>
+      ${isMain ? `<button class="link-btn" type="button" data-act="move-dish" data-id="${esc(d.id)}" aria-label="Byt kategori för ${esc(d.name)}">Byt kategori</button>` : ""}
+    `)}
   </div>`;
 }
 
@@ -48,26 +52,49 @@ function breakfastHtml() {
 }
 
 let tab = "huvudratt"; // the open tab, kept while the app runs
+let category = "alla";
+let manageCategories = false;
+
+function categoryManager() {
+  return `<section class="card" id="category-manager">
+    <h2>Hantera kategorier</h2>
+    ${dishes.categories().map((item) => `<div class="category-setting">
+      <span>${esc(item.label)}</span>
+      <button type="button" class="link-btn" data-act="rename-category" data-id="${esc(item.id)}" aria-label="Byt namn på ${esc(item.label)}">Byt namn</button>
+      <button type="button" class="link-btn" data-act="delete-category" data-id="${esc(item.id)}" aria-label="Ta bort kategorin ${esc(item.label)}">Ta bort</button>
+    </div>`).join("")}
+    <button type="button" class="btn-secondary" data-act="add-category">Ny kategori</button>
+  </section>`;
+}
 
 function listHtml(msg, undo) {
   const g = meals.GROUPS.find((x) => x.id === tab);
   const all = meals.allDishes(g.id);
-  const on = all.filter((d) => meals.isVisible(d.id)), off = all.filter((d) => !meals.isVisible(d.id));
+  const isMain = g.id === "huvudratt";
+  const matches = (dish, id) => dishes.categoriesOf(dish).some((item) => item.id === id);
+  const filters = [{ id: "alla", label: "Alla" }, ...dishes.categories()];
+  if (category === "utan" || all.some((dish) => matches(dish, "utan"))) filters.push({ id: "utan", label: "Utan kategori" });
+  const list = !isMain || category === "alla" ? all : all.filter((dish) => matches(dish, category));
+  const on = list.filter((d) => meals.isVisible(d.id)), off = list.filter((d) => !meals.isVisible(d.id));
   return `<div class="view">
     <nav class="subnav" aria-label="Relaterat"><a href="#/kost">&larr; Kost</a></nav>
     <section class="card">
       <h2><span class="dot" style="background: var(--c-vikt)"></span>Rätter</h2>
       <div class="seg" role="group" aria-label="Måltid">${meals.GROUPS.map((x) => `<button type="button" data-act="tab" data-tab="${x.id}" aria-pressed="${x.id === tab}">${x.label}</button>`).join("")}</div>
+      ${isMain ? `<div class="dish-filters" role="group" aria-label="Filtrera huvudrätter">${filters.map((item) =>
+        `<button type="button" data-act="category" data-category="${esc(item.id)}" aria-pressed="${category === item.id}">${esc(item.label)}</button>`).join("")}</div>
+        <button type="button" class="link-btn" data-act="manage-categories" aria-expanded="${manageCategories}"${manageCategories ? ' aria-controls="category-manager"' : ""}>${manageCategories ? "Stäng kategorihantering" : "Hantera kategorier"}</button>` : ""}
       <p class="note" id="list-note" role="status" aria-live="polite">${msg ?? ""}${undo ? ` <button class="link-btn" type="button" data-act="undo-delete" data-id="${esc(undo)}">Ångra</button>` : ""}</p>
     </section>
+    ${isMain && manageCategories ? categoryManager() : ""}
     <section class="card">
-      <h2><span class="dot" style="background: var(--c-midja)"></span>${g.id === "mellanmal" ? "Proteinpåfyllning" : "Gillar"}</h2>
+      <h2><span class="dot" style="background: var(--c-midja)"></span>${g.id === "mellanmal" ? "Proteinpåfyllning" : "Används i förslag"}</h2>
       ${g.id === "mellanmal" ? topupHtml() : ""}
       ${g.id === "frukost" ? breakfastHtml() : ""}
-      ${on.map(rowHtml).join("") || `<p class="empty">Inga rätter här.</p>`}
+      ${on.map(rowHtml).join("") || `<p class="empty">${off.length ? "Inga aktiva rätter i den här kategorin. Du kan slå på en rätt under Fler rätter." : "Inga rätter här ännu."}</p>`}
       <button class="btn-secondary add-dish" type="button" data-act="add" data-group="${g.id}">Lägg till rätt</button>
     </section>
-    ${off.length ? `<details class="card more-card">
+    ${off.length ? `<details class="card more-card"${!on.length || (isMain && category !== "alla") ? " open" : ""}>
       <summary><h2><span class="dot" style="background: var(--ink-3)"></span>Fler rätter <span class="count">${off.length}</span></h2></summary>
       <p class="note">Används inte i förslagen. Slå på en rätt så kommer den med.</p>
       ${off.map(rowHtml).join("")}
@@ -99,11 +126,21 @@ export function mount(el) {
     }
     if (editing.auto !== true || !foods.isLoaded()) return;
     const grams = meals.suggestGrams(editing.rows.map(foodOf), editing.slot);
-    // Eggs and whole fruit in pieces (the same weight per piece as the "st" unit counts with).
     editing.rows.forEach((r, i) => {
-      const per = foods.pieceGrams(r.name);
-      if (per) { r.amount = Math.max(1, Math.round(grams[i] / per)); r.unit = "st"; } else { r.amount = grams[i]; r.unit = "g"; }
+      const measure = foods.measureOf({ name: r.name });
+      r.unit = measure?.unit ?? "g";
+      r.amount = r.unit === "st" ? Math.max(1, Math.round(grams[i] / measure.gpu))
+        : measure ? Math.max(0.1, Math.round(grams[i] / measure.gpu * 10) / 10) : grams[i];
     });
+  }
+
+  function addIngredient(food) {
+    syncName();
+    const measure = foods.measureOf(food);
+    editing.rows.push({ name: food.name, amount: measure?.amount ?? meals.defaultGrams(food), unit: measure?.unit ?? "g", nummer: food.nummer });
+    refit();
+    results = [];
+    render("#food-search");
   }
 
   function totalsText() {
@@ -189,12 +226,16 @@ export function mount(el) {
   }
 
   function render(focusSel) {
+    const keepMoreOpen = Boolean(el.querySelector(".more-card[open]"));
     el.innerHTML = editing ? formHtml() : listHtml(msg, undo);
+    if (keepMoreOpen) el.querySelector(".more-card")?.setAttribute("open", "");
     const form = el.querySelector("#dish-form");
     if (form) form.onsubmit = (e) => { e.preventDefault(); submit(); };
     if (!focusSel) window.scrollTo(0, 0);
     const sel = focusSel ?? (editing ? "#d-name" : null);
-    if (sel) el.querySelector(sel)?.focus();
+    const target = sel ? el.querySelector(sel) : null;
+    const menu = target?.closest(".action-menu:not([open])");
+    (menu?.querySelector("summary") ?? target)?.focus();
   }
 
   function open(id, slot) {
@@ -301,20 +342,9 @@ export function mount(el) {
     const { act, id } = btn.dataset;
     if (act === "add") open(null, meals.GROUPS.find((g) => g.id === btn.dataset.group).slots[0]);
     else if (act === "edit") open(id, meals.dishOf(id).slot);
-    else if (act === "own-food") createOwnFood(el.querySelector("#food-search").value, (food) => {
-      syncName();
-      editing.rows.push({ name: food.name, amount: meals.defaultGrams(food), unit: "g", nummer: food.nummer });
-      refit();
-      results = [];
-      render("#food-search");
-    });
+    else if (act === "own-food") createOwnFood(el.querySelector("#food-search").value, addIngredient);
     else if (act === "add-food") {
-      syncName();
-      const food = foods.foodByNumber(Number(btn.dataset.nr));
-      editing.rows.push({ name: food.name, amount: meals.defaultGrams(food), unit: "g", nummer: food.nummer });
-      refit();
-      results = [];
-      render("#food-search");
+      addIngredient(foods.foodByNumber(Number(btn.dataset.nr)));
     } else if (act === "remove") {
       syncName();
       editing.rows.splice(+btn.dataset.i, 1);
@@ -347,6 +377,46 @@ export function mount(el) {
       tab = btn.dataset.tab;
       msg = ""; undo = null;
       render(`[data-act="tab"][data-tab="${tab}"]`);
+    } else if (act === "category") {
+      category = btn.dataset.category;
+      render(`[data-act="category"][data-category="${category}"]`);
+    } else if (act === "manage-categories") {
+      manageCategories = !manageCategories;
+      render('[data-act="manage-categories"]');
+    } else if (act === "add-category" || act === "rename-category") {
+      const item = dishes.categories().find((entry) => entry.id === id);
+      editDialog(item ? "Byt namn på kategori" : "Ny kategori",
+        `<label class="field">Namn <input name="name" maxlength="35" required value="${esc(item?.label ?? "")}"></label>`,
+        "Spara", (data) => {
+          const error = dishes.saveCategory(item?.id, data.get("name"));
+          if (error) return error;
+          msg = item ? "Kategorins namn har ändrats." : "Kategorin har lagts till.";
+          return () => render('[data-act="manage-categories"]');
+        });
+    } else if (act === "delete-category") {
+      const item = dishes.categories().find((entry) => entry.id === id);
+      if (!item) return;
+      editDialog(`Ta bort ${item.label}?`, "<p>Rätterna finns kvar. De som bara tillhör den här kategorin visas under Utan kategori.</p>",
+        "Ta bort kategori", () => {
+          if (!dishes.deleteCategory(id)) return SAVE_ERROR;
+          if (category === id) category = "alla";
+          msg = "Kategorin har tagits bort.";
+          return () => render('[data-act="manage-categories"]');
+        });
+    } else if (act === "move-dish") {
+      const dish = meals.dishOf(id);
+      if (!dish) return;
+      const current = dishes.categoryChoice(id);
+      const options = [{ id: "", label: "Automatiskt" }, ...dishes.categories(), { id: "utan", label: "Utan kategori" }];
+      editDialog("Byt kategori", `<p>${esc(dish.name)}</p><label class="field">Kategori <select class="pick" name="category">
+        ${options.map((item) => `<option value="${esc(item.id)}"${item.id === current ? " selected" : ""}>${esc(item.label)}</option>`).join("")}</select></label>`,
+        "Spara", (data) => {
+          if (!dishes.moveDish(id, data.get("category"))) return SAVE_ERROR;
+          const assigned = dishes.categoriesOf(dish);
+          msg = `${esc(dish.name)} · ${esc(assigned.map((item) => item.label).join(", "))}`;
+          if (category !== "alla" && !assigned.some((item) => item.id === category)) category = assigned[0].id;
+          return () => render(`[data-act="move-dish"][data-id="${CSS.escape(id)}"]`);
+        });
     } else if (act === "hide" || act === "show") {
       const name = meals.dishOf(id).name;
       if (!dishes.setVisible(id, act === "show", replace)) { msg = SAVE_ERROR; render(); return; }

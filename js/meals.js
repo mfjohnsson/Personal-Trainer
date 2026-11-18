@@ -6,6 +6,8 @@
 // the protein shake first, cottage cheese or quark second.
 // Lunch and dinner follow a weekly rotation of four dishes: two batch-cooked (beef and chicken), one fish
 // and one quick dish.
+import { measureOf, pieceGrams } from "./foods.js";
+
 export const SLOTS = [
   { id: "frukost", label: "Frukost" },
   { id: "lunch", label: "Lunch" },
@@ -162,6 +164,30 @@ export function guessKind(d) {
 }
 const kindOf = (d) => (KINDS.some((k) => k.id === d.kind) ? d.kind : guessKind(d));
 
+export const DISH_CATEGORIES = [
+  { id: "kott", label: "Kött" },
+  { id: "fisk", label: "Fisk" },
+  { id: "kyckling", label: "Kyckling & fågel" },
+  { id: "snabb", label: "Snabb" },
+  { id: "ovrigt", label: "Övrigt" },
+];
+const POULTRY = /kyckling|kalkon|anka|andbröst|gås|höna|höns/i;
+const MEAT = /kött|nötfärs|nötkött|fläsk|biff|entrecôte|ryggbiff|oxfilé|lamm|vilt|älg|renkött|korv|skinka|bacon|hamburgare/i;
+const MEATLESS = /\b(?:vego|vegetarisk|vegansk|soja|tofu|kikärts|bön|lins|svamp)(?:[\p{L}-]*)(?:färs|biff|korv|burgare)|köttfri|fiskfri|växtbaserad/iu;
+
+export function dishCategories(dish) {
+  const categoryOfText = (text) => {
+    if (MEATLESS.test(text)) return null;
+    if (POULTRY.test(text)) return "kyckling";
+    if (FISH.test(text) || /makrill|kräft|sill|gädda|hummer|mussl|ansjovis|strömming/i.test(text)) return "fisk";
+    if (MEAT.test(text)) return "kott";
+    return null;
+  };
+  const ingredientCategory = dish.ingredients.map(([name]) => categoryOfText(name)).find(Boolean);
+  const main = ingredientCategory ?? categoryOfText(dish.name) ?? (dish.kind === "fisk" && !MEATLESS.test(dish.name) ? "fisk" : "ovrigt");
+  return dish.kind === "snabb" ? [main, "snabb"] : [main];
+}
+
 // How many dishes a meal needs on offer before one can be switched off.
 export const minDishes = (slot) => (slot === "frukost" || slot === "mellanmal" ? 1 : 2);
 // Dishes offered in pickers and used by the planner, per meal. Filled by applyDishes; arrays keep identity.
@@ -186,7 +212,11 @@ export const isListed = (id) => listed.has(id);
 export const isRemoved = () => false;
 
 function register(slot, d, show, list = true) {
-  const full = { ...d, slot, meals: mealsOf(slot, d.meals) };
+  const ingredients = d.ingredients.map(([name, amount, unit, ...rest]) => {
+    const per = unit === "g" && pieceGrams(name);
+    return [name, per ? amount / per : amount, per ? "st" : unit, ...rest];
+  });
+  const full = { ...d, ingredients, slot, meals: mealsOf(slot, d.meals) };
   if (isMain(slot)) full.kind = kindOf(full);
   full.lines = linesOf(full.ingredients);
   if (full.water) full.water = { ...full.water, lines: linesOf(full.water.ingredients) };
@@ -272,7 +302,7 @@ export const allDishes = (group) => {
   return [...dishById.values()].filter((d) => g.slots.includes(d.slot) && listed.has(d.id));
 };
 
-export const UNITS = ["g", "dl", "st", "skivor"];
+export const UNITS = ["g", "dl", "cl", "st", "skivor"];
 
 // Shopping-list category of an ingredient: a known ingredient with the same name, else by keyword.
 const CATEGORY_WORDS = [
@@ -409,7 +439,7 @@ const PART_MAX = 2.5; // "Mer protein" stops here
 export const MORE_STEP = 0.25;
 export const TWEAK_STEP = 0.25;
 export const TWEAK_MAX = 5;
-const TWEAK_UNIT_STEP = { g: 10, st: 1, skivor: 1, dl: 0.5 };
+const TWEAK_UNIT_STEP = { g: 10, st: 1, skivor: 1, dl: 0.5, cl: 5 };
 
 const variantOf = (m) => { const d = dishOf(m.dish); return m.water && d?.water ? { ...d, ...d.water, lines: d.water.lines } : d; };
 const sideOf = (m) => (finite(m.side) ? m.side : m.portion);
@@ -426,7 +456,10 @@ function partsOf(m, d) {
 // Foods you added to one meal in the day view: meal.add = [{ name, nummer, amount, unit: "g" | "st" | "dl" | "cl", gpu, step?
 // (grams per unit), kcal, protein, fat, carbs (per 100 g) }]. They are not scaled: you set the amount.
 export const ADD_MAX = 8;
-const addsOf = (m) => (Array.isArray(m.add) ? m.add : []);
+export const addsOf = (m) => (Array.isArray(m.add) ? m.add.map((item) => {
+  const per = item.unit === "g" && pieceGrams(item.name);
+  return per ? { ...item, unit: "st", amount: item.amount * item.gpu / per, gpu: per } : item;
+}) : []);
 const addMacros = (a) => { const k = (a.amount * a.gpu) / 100; return { kcal: a.kcal * k, protein: a.protein * k, fat: a.fat * k, carbs: a.carbs * k }; };
 const addsTotal = (m) => addsOf(m).reduce((t, a) => add(t, addMacros(a)), { ...ZERO });
 
@@ -449,7 +482,7 @@ export function mealInfo(meal) {
   const added = addsOf(meal).map((x) => ({
     name: x.name, unit: x.unit, category: categoryOf(x.name), added: true,
     part: isProteinFood({ name: x.name, kcal: x.kcal, protein: x.protein }) ? "p" : "s",
-    amount: x.unit === "g" ? Math.round(x.amount * q) : Math.round(x.amount * q * 10) / 10,
+    amount: x.unit === "g" ? Math.round(x.amount * q) : x.unit === "st" ? Math.round(x.amount * q * 100) / 100 : Math.round(x.amount * q * 10) / 10,
   }));
   return {
     name: d.name,
@@ -459,8 +492,10 @@ export function mealInfo(meal) {
       const k = (lines ? (lines[i].part === "p" ? a : b) : a) * tweakOf(meal, i);
       return {
         name, unit, category, part: lines ? lines[i].part : "p",
-        amount: unit === "g" ? Math.round((amount * k) / 5) * 5
-          : unit === "dl" ? Math.round(amount * k * 10) / 10
+        amount: unit === "g" ? (k === 1 ? Math.round(amount * 100) / 100 : Math.round((amount * k) / 5) * 5)
+          : unit === "st" && !Number.isInteger(amount) ? Math.round(amount * k * 100) / 100
+            : unit === "dl" ? Math.round(amount * k * 10) / 10
+            : unit === "cl" ? Math.round(amount * k)
             : Math.max(k > 0 ? 1 : 0, Math.round(amount * k)), // whole pieces: eggs and fruit
       };
     }).concat(added),
@@ -968,13 +1003,14 @@ export function tweakIngredient(week, d, slot, ing, dir) {
 // anything else is weighed in grams.
 export const ADD_STEP = { g: 10, st: 1, dl: 0.5, cl: 5 };
 export const ADD_UNITS = ["g", "st", "dl", "cl"];
-export function replaceIngredient(week, d, slot, ing, food, grams) {
+export function replaceIngredient(week, d, slot, ing, food, amount) {
   const x = dishMeal(week, d, slot);
-  if (!x?.dd.lines?.[ing] || !food || !finite(grams) || grams <= 0 || grams > 5000) return null;
+  const { unit = "g", gpu = 1, step } = measureOf(food) ?? {};
+  if (!x?.dd.lines?.[ing] || !food || !finite(amount) || amount <= 0 || amount * gpu > 5000) return null;
   const add = addsOf(x.m).filter((item) => item.replaces !== ing);
   if (add.length >= ADD_MAX) return null;
   const { name, nummer, kcal, protein, fat, carbs } = food;
-  add.push({ name, nummer, kcal, protein, fat, carbs, unit: "g", gpu: 1, amount: grams / (x.m.ate ?? 1), replaces: ing });
+  add.push({ name, nummer, kcal, protein, fat, carbs, unit, gpu, amount: amount / (x.m.ate ?? 1), replaces: ing, ...(step ? { step } : {}) });
   const tweak = x.dd.ingredients.map((_, j) => j === ing ? 0 : tweakOf(x.m, j));
   const { fixP: _p, ...rest } = x.m;
   return withMeal(week, d, x.i, { ...rest, tweak, add, fixed: true });
@@ -999,8 +1035,8 @@ export function setAddAmount(week, d, slot, j, amount) {
   const list = x ? addsOf(x.m) : [];
   if (!x || !(j >= 0 && j < list.length) || !(finite(amount) && amount >= 0 && amount <= 5000)) return null;
   const unit = list[j].unit;
-  const rounded = unit === "st" ? Math.round(amount * 2) / 2 : unit === "dl" ? Math.round(amount * 10) / 10 : Math.round(amount);
-  const next = rounded > 0 ? list.map((a, k) => (k === j ? { ...a, amount: rounded } : a)) : list.filter((_, k) => k !== j);
+  const rounded = unit === "st" ? Math.round(amount * 100) / 100 : unit === "dl" ? Math.round(amount * 10) / 10 : Math.round(amount);
+  const next = rounded > 0 ? list.map((a, k) => (k === j ? { ...a, amount: rounded / (x.m.ate ?? 1) } : a)) : list.filter((_, k) => k !== j);
   const { add: _a, ...rest } = x.m;
   return withMeal(week, d, x.i, { ...rest, ...(next.length ? { add: next } : {}), fixed: true });
 }
@@ -1009,7 +1045,8 @@ export function stepAdd(week, d, slot, j, dir) {
   const a = x ? addsOf(x.m)[j] : null;
   if (!a) return null;
   const step = finite(a.step) && a.step > 0 ? a.step : ADD_STEP[a.unit] ?? 10;
-  const next = dir > 0 ? Math.floor(a.amount / step + 1e-6) * step + step : Math.ceil(a.amount / step - 1e-6) * step - step;
+  const amount = a.amount * (x.m.ate ?? 1);
+  const next = dir > 0 ? Math.floor(amount / step + 1e-6) * step + step : Math.ceil(amount / step - 1e-6) * step - step;
   return setAddAmount(week, d, slot, j, Math.max(0, next));
 }
 
@@ -1037,6 +1074,19 @@ export function changeDish(week, d, slot, dishId) {
   if (i < 0 || !fits(chosen, slot) || otherMain(week.days[d], slot) === dishId) return null;
   const kept = addsOf(week.days[d].meals[i]).filter((item) => item.replaces === undefined);
   return withMeal(week, d, i, { slot, dish: dishId, portion: 1, side: 1, chosen: true, ...(kept.length ? { add: kept, fixed: true } : {}) });
+}
+
+export function useSavedRecipe(week, d, slot, dishId) {
+  const source = dishMeal(week, d, slot);
+  if (!source || !fits(dishOf(dishId), slot)) return null;
+  const { i, m } = source;
+  // The recipe already contains the amounts from the displayed meal.
+  const scale = 1 / (m.ate ?? 1);
+  const meal = { slot, dish: dishId, portion: scale, side: scale, chosen: true, fixed: true,
+    ...(m.ate === undefined ? {} : { ate: m.ate }) };
+  if (!dayOver(week, d)) return withMeal(week, d, i, meal);
+  const day = week.days[d];
+  return replaceDay(week, d, { ...day, meals: day.meals.map((row, j) => j === i ? meal : row) });
 }
 
 // The top-up added (on) or removed (off) by you; the day is re-fitted.
