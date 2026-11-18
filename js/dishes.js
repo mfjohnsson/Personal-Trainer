@@ -55,6 +55,38 @@ export function saveDish(id, slot, values, replace) {
   return commit(next, new Set([dishId]), replace) ? dishId : null;
 }
 
+export function updateFromMeal(id, values, currentWeek, dayIndex, slot) {
+  const original = meals.dishOf(id);
+  const cur = get("dishes") ?? {};
+  const archive = `recept-${crypto.randomUUID()}`;
+  const { lines: _lines, ...snapshot } = original;
+  const next = {
+    ...cur,
+    items: { ...cur.items, [id]: { slot: original.slot, ...values } },
+    deleted: { ...cur.deleted, [archive]: snapshot },
+  };
+  const planned = { ...get("meals"), [currentWeek.start]: currentWeek };
+  const preserve = (m) => m?.dish === id ? { ...m, dish: archive } : m;
+  const changed = new Set([id]);
+  meals.applyDishes(next);
+  const weeks = Object.fromEntries(Object.entries(planned).map(([start, week]) => {
+    if (!meals.isWeek(week) || !meals.resolves(week)) return [start, week];
+    const days = week.days.map((day, d) => {
+      const over = meals.dayOver(week, d);
+      const rows = day.meals.map((m, i) => {
+        const source = start === currentWeek.start && d === dayIndex && m.slot === slot;
+        return m.dish === id && (source || over || meals.isPinned(week, d, i) || meals.isTouched(m)) ? preserve(m) : m;
+      });
+      return { ...day, meals: rows, ...(over && day.extra ? { extra: preserve(day.extra) } : {}),
+        ...(over && day.extra2 ? { extra2: preserve(day.extra2) } : {}) };
+    });
+    return [start, meals.refitWeek({ ...week, days }, changed)];
+  }));
+  const ok = setMany({ dishes: next, meals: weeks });
+  if (!ok) meals.applyDishes(cur);
+  return ok;
+}
+
 // Puts a built-in dish back the way it shipped.
 export function resetDish(id, replace) {
   const cur = get("dishes") ?? {};

@@ -7,6 +7,8 @@ import * as meals from "../meals.js";
 import * as mealplan from "../mealplan.js";
 import * as foods from "../foods.js";
 import { esc } from "../html.js";
+import { createOwnFood, foodHint, editDialog } from "./ownfood.js";
+import * as dishes from "../dishes.js";
 
 const nf = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 1 });
 const amount = (i) => `${nf.format(i.amount)} ${i.unit}`;
@@ -18,6 +20,7 @@ const openMeals = new Set(); // "day:slot" of opened meals, kept while the app r
 export const weekView = { next: false };
 let customFor = null; // "day:slot" whose "Åt något annat" form is open
 let addFor = null; // "day:slot" whose "Lägg till livsmedel" search is open
+let swapIndex = null;
 let menuFor = null; // day whose ⋯ menu is open
 let adjustFor = null; // day whose calorie panel is open
 let regenFor = null; // day asking "Nytt förslag?"
@@ -95,7 +98,8 @@ function calcHtml() {
   return `<div class="ing-list" id="c-rows">${calcRowsHtml()}</div>
     <div class="field"><label for="c-search">Räkna ut från mat (valfritt)</label>
       <input id="c-search" type="search" autocomplete="off" placeholder="Sök, t.ex. hamburgare, pommes, öl">
-      <div class="results" id="c-results"></div></div>
+      <div class="results" id="c-results"></div>
+      <button class="link-btn" type="button" data-act="calc-own">Skapa eget livsmedel</button></div>
     <p class="calc-total" id="c-total" aria-live="polite"></p>`;
 }
 
@@ -142,9 +146,10 @@ function amountRow(name, value, unit, { attrs, stepAct, inputAttr, i, canDown, c
 // "Lägg till livsmedel": a search in the food database.
 function addFormHtml(attrs) {
   return `<div class="add-food">
-    <label class="pick-label" for="a-search">Lägg till livsmedel</label>
+    <label class="pick-label" for="a-search">${swapIndex === null ? "Lägg till livsmedel" : "Sök ersättare"}</label>
     <input id="a-search" type="search" autocomplete="off" placeholder="Sök, t.ex. banan, keso, ost" ${attrs}>
     <div class="results" id="a-results"></div>
+    <button class="link-btn" type="button" data-act="add-own" ${attrs}>Skapa eget livsmedel</button>
     <button class="link-btn" type="button" data-act="add-close" ${attrs}>Avbryt</button>
   </div>`;
 }
@@ -167,17 +172,19 @@ function editHtml(week, d, m, i, planOnly) {
     }
     const t = Array.isArray(m.tweak) ? m.tweak[j] ?? 1 : 1;
     const lower = esc(it.name.toLowerCase());
+    const swap = canAdd || m.add?.some((item) => item.replaces === j)
+      ? `<button class="link-btn" type="button" data-act="ing-swap" data-ing="${j}" ${attrs} aria-label="Byt ut ${lower}">Byt ut</button>` : "";
     // Left out of this meal only: swap it for something else or put it back.
     if (t === 0) {
       return `<div class="ate-row ing-tweak ing-off"><span class="pick-label"><s>${esc(it.name)}</s> <span class="note">borttagen</span></span>
         <span class="amt-ctl">
-          ${canAdd ? `<button class="link-btn" type="button" data-act="ing-swap" ${attrs} aria-label="Byt ut ${lower}">Byt ut</button>` : ""}
+          ${swap}
           <button class="link-btn" type="button" data-act="ing-restore" data-ing="${j}" ${attrs} aria-label="Lägg tillbaka ${lower}">Tillbaka</button>
         </span></div>`;
     }
     return amountRow(it.name, it.amount, it.unit, {
       attrs, stepAct: "tweak", inputAttr: "data-amt", i: j, canDown: it.amount > 0, canUp: t < meals.TWEAK_MAX,
-      remove: `<button class="icon-btn rm" type="button" data-act="ing-remove" data-ing="${j}" ${attrs} aria-label="Ta bort ${lower} från måltiden">✕</button>`,
+      remove: `${swap}<button class="icon-btn rm" type="button" data-act="ing-remove" data-ing="${j}" ${attrs} aria-label="Ta bort ${lower} från måltiden">✕</button>`,
     });
   }).join("");
   const adder = addFor === key ? addFormHtml(attrs)
@@ -194,6 +201,10 @@ function editHtml(week, d, m, i, planOnly) {
   return `<div class="edit-box">
       ${rows}
       ${adder}
+      ${meals.isTouched(m) && foods.isLoaded() ? `<div class="meal-actions">
+        <button type="button" class="link-btn" data-act="recipe-copy" ${attrs}>Spara som ny rätt</button>
+        ${meals.isListed(m.dish) ? `<button type="button" class="link-btn" data-act="recipe-update" ${attrs}>Uppdatera grundreceptet</button>` : ""}
+      </div>` : ""}
       <p class="note macros">Fett ${info.fat} g · Kolhydrater ${info.carbs} g</p>
     </div>
     ${picker}
@@ -399,15 +410,15 @@ export function bindMeals(el, { start, target, rerender, failed }) {
   el.addEventListener("input", (e) => {
     const t = e.target;
     if (t.id === "a-search") {
-      const hits = t.value.trim().length >= 2 ? foods.search(t.value, 8) : [];
+      const hits = foods.lookup(t.value);
       el.querySelector("#a-results").innerHTML = hits.map((f) => `<button type="button" class="result" data-act="add-pick" data-nr="${f.nummer}" data-day="${t.dataset.day}" data-slot="${t.dataset.slot}">
-          <span>${esc(f.name)}</span><span class="note">${Math.round(f.kcal)} kcal · ${nf.format(f.protein)} g protein /100 g</span></button>`).join("");
+          <span>${esc(f.name)}</span><span class="note">${foodHint(f)}${Math.round(f.kcal)} kcal · ${nf.format(f.protein)} g protein /100 g</span></button>`).join("");
     } else if (t.id === "c-search") {
-      const hits = t.value.trim().length >= 2 ? foods.search(t.value, 8) : [];
+      const hits = foods.lookup(t.value);
       el.querySelector("#c-results").innerHTML = hits.map((f) => {
         const per = foods.isDrink(f) ? `${Math.round(f.kcal * foods.drinkSize(f) / 10)} kcal per ${foods.drinkSize(f)} cl` : `${Math.round(f.kcal)} kcal · ${nf.format(f.protein)} g protein /100 g`;
         return `<button type="button" class="result" data-act="calc-add" data-nr="${f.nummer}">
-          <span>${esc(f.name)}</span><span class="note">${per}</span></button>`;
+          <span>${esc(f.name)}</span><span class="note">${foodHint(f)}${per}</span></button>`;
       }).join("");
     } else if (t.dataset.amount !== undefined) {
       customRows[+t.dataset.amount].amount = num(t.value);
@@ -423,8 +434,7 @@ export function bindMeals(el, { start, target, rerender, failed }) {
     const t = e.target;
     if (e.key !== "Enter") return;
     if (t.classList?.contains("amt")) { e.preventDefault(); t.blur(); return; } // the amount is saved on change
-    if (t.id === "a-search") { e.preventDefault(); el.querySelector('[data-act="add-pick"]')?.click(); return; }
-    if (t.id === "c-search") { e.preventDefault(); el.querySelector('[data-act="calc-add"]')?.click(); }
+    if (t.id === "a-search" || t.id === "c-search") e.preventDefault();
     else if (t.dataset?.amount !== undefined || t.dataset?.abv !== undefined) e.preventDefault();
   });
 
@@ -501,16 +511,19 @@ export function bindMeals(el, { start, target, rerender, failed }) {
         });
       }
     }
-    else if (act === "calc-add") {
-      const f = foods.foodByNumber(Number(btn.dataset.nr));
-      if (!f) return;
-      customRows.push(newRow(f));
-      el.querySelector("#c-rows").innerHTML = calcRowsHtml();
-      el.querySelector("#c-results").innerHTML = "";
-      const s = el.querySelector("#c-search");
-      s.value = "";
-      recalc();
-      s.focus();
+    else if (act === "calc-add" || act === "calc-own") {
+      const pick = (food) => {
+        if (!food) return;
+        customRows.push(newRow(food));
+        el.querySelector("#c-rows").innerHTML = calcRowsHtml();
+        el.querySelector("#c-results").innerHTML = "";
+        const s = el.querySelector("#c-search");
+        s.value = "";
+        recalc();
+        s.focus();
+      };
+      if (act === "calc-own") createOwnFood(el.querySelector("#c-search").value, pick);
+      else pick(foods.foodByNumber(Number(btn.dataset.nr)));
     }
     else if (act === "calc-remove") {
       customRows.splice(+btn.dataset.i, 1);
@@ -523,15 +536,70 @@ export function bindMeals(el, { start, target, rerender, failed }) {
     else if (act === "skip") { openMeals.add(key); addFor = null; save(meals.setSkip(week(), +day, slot, true), sel("skip-undo")); }
     else if (act === "skip-undo") { openMeals.add(key); save(meals.setSkip(week(), +day, slot, false), sel("skip")); }
     else if (act === "more-protein") { openMeals.add(key); save(meals.moreProtein(week(), +day, slot), `${sel("more-protein")}, ${sel("skip")}`); }
-    else if (act === "add-open") { addFor = key; openMeals.add(key); rerender(); el.querySelector("#a-search")?.focus(); }
+    else if (act === "add-open") { swapIndex = null; addFor = key; openMeals.add(key); rerender(); el.querySelector("#a-search")?.focus(); }
     else if (act === "add-close") { addFor = null; rerender(); el.querySelector(sel("add-open"))?.focus(); }
-    else if (act === "add-pick") {
-      const f = foods.foodByNumber(Number(btn.dataset.nr));
-      if (!f) return;
-      addFor = null;
-      openMeals.add(key);
-      const n = week().days[+day]?.meals.find((x) => x.slot === slot)?.add?.length ?? 0;
-      save(meals.addFood(week(), +day, slot, f, foods.measureOf(f)), `[data-add-amt="${n}"][data-day="${day}"][data-slot="${slot}"]`);
+    else if (act === "add-pick" || act === "add-own") {
+      const pick = (food) => {
+        if (!food) return;
+        const current = week();
+        const meal = current.days[+day].meals.find((m) => m.slot === slot);
+        if (swapIndex === null) {
+          addFor = null;
+          save(meals.addFood(current, +day, slot, food, foods.measureOf(food)), sel("add-open"));
+          return;
+        }
+        const index = swapIndex;
+        const previous = meals.mealInfo(meal);
+        const ingredient = previous.ingredients[index];
+        const previousDay = meals.dayTotals(current.days[+day]);
+        const replaced = meal.add?.find((item) => item.replaces === index);
+        const grams = replaced ? Math.round(replaced.amount * (meal.ate ?? 1)) : ingredient.amount
+          ? Math.round(foods.gramsOf(ingredient.amount, ingredient.unit, ingredient.name).grams) : meals.defaultGrams(food);
+        const candidate = (data) => meals.replaceIngredient(current, +day, slot, index, food, num(data.get("grams")));
+        editDialog("Byt ingrediens", `<p>${esc(ingredient.name)} → ${esc(food.name)}</p>
+          <label class="field">Mängd (g) <input name="grams" type="number" min="1" max="5000" value="${grams}" required></label>
+          <p class="note" aria-live="polite" data-impact></p>`, "Byt i måltiden", (data) => {
+          const next = candidate(data);
+          if (!next) return "Kontrollera mängden.";
+          addFor = null;
+          swapIndex = null;
+          if (!save(next)) return "Kunde inte spara måltiden.";
+        }, (data, form) => {
+          const next = candidate(data);
+          const impact = form.querySelector("[data-impact]");
+          if (!next) { impact.textContent = ""; return; }
+          const nextDay = meals.dayTotals(next.days[+day]);
+          const nextMeal = meals.mealInfo(next.days[+day].meals.find((m) => m.slot === slot));
+          impact.textContent = `Måltiden: ${signed(nextMeal.kcal - previous.kcal)} kcal · ${signed(nextMeal.protein - previous.protein)} g protein. Dagen: ${signed(nextDay.kcal - previousDay.kcal)} kcal · ${signed(nextDay.protein - previousDay.protein)} g protein.`;
+        });
+      };
+      if (act === "add-own") createOwnFood(el.querySelector("#a-search").value, pick);
+      else pick(foods.foodByNumber(Number(btn.dataset.nr)));
+    }
+    else if (act === "recipe-copy" || act === "recipe-update") {
+      const current = week();
+      const meal = current.days[+day].meals.find((m) => m.slot === slot);
+      const dish = meals.dishOf(meal.dish);
+      const ingredients = meals.mealInfo(meal).ingredients.flatMap((item, i) => {
+        if (item.amount <= 0) return [];
+        const extra = item.added ? meal.add[i - dish.ingredients.length] : null;
+        if (extra) return [[item.name, extra.amount * (meal.ate ?? 1) * extra.gpu, "g", item.category, extra.nummer]];
+        return [[item.name, item.amount, item.unit, item.category, dish.ingredients[i][4]]];
+      });
+      const copy = act === "recipe-copy";
+      const title = copy ? "Spara som ny rätt" : "Uppdatera grundreceptet";
+      const name = copy ? (dish.name.slice(0, 50) + " – variant") : dish.name;
+      const body = copy ? `<label class="field">Namn <input name="name" required maxlength="60" value="${esc(name)}"></label>`
+        : "<p>Ingredienserna och mängderna i den här måltiden blir grundreceptet för kommande måltider. Tidigare måltider behåller sina recept.</p>";
+      editDialog(title, body, title, (data) => {
+        const macros = foods.macrosOf(ingredients);
+        const { values, errors } = meals.validateDish({ ...dish, ...macros, name: data.get("name") ?? name, ingredients, auto: false }, dish.slot);
+        if (errors.name || errors.ingredients) return errors.name || errors.ingredients;
+        const ok = copy ? dishes.saveDish(null, dish.slot, values) : dishes.updateFromMeal(dish.id, values, current, +day, slot);
+        if (!ok) return "Kunde inte spara receptet.";
+        rerender();
+        el.querySelector(`[data-meal="${key}"] > summary`)?.focus();
+      });
     }
     else if (act === "add-step") {
       const ing = +btn.dataset.ing, dir = +btn.dataset.dir;
@@ -547,7 +615,7 @@ export function bindMeals(el, { start, target, rerender, failed }) {
       const ing = +btn.dataset.ing;
       save(meals.restoreIngredient(week(), +day, slot, ing), `[data-act="ing-remove"][data-day="${day}"][data-slot="${slot}"][data-ing="${ing}"]`);
     }
-    else if (act === "ing-swap") { addFor = key; openMeals.add(key); rerender(); el.querySelector("#a-search")?.focus(); }
+    else if (act === "ing-swap") { swapIndex = +btn.dataset.ing; addFor = key; openMeals.add(key); rerender(); el.querySelector("#a-search")?.focus(); }
     else if (act === "add-remove") save(meals.setAddAmount(week(), +day, slot, +btn.dataset.ing, 0), sel("add-open"));
     else if (act === "tweak") {
       const ing = +btn.dataset.ing, dir = +btn.dataset.dir;

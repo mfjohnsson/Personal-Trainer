@@ -941,6 +941,10 @@ export function setAmount(week, d, slot, ing, amount) {
 export function restoreIngredient(week, d, slot, ing) {
   const x = dishMeal(week, d, slot);
   if (!x || !(ing >= 0 && ing < x.dd.ingredients.length)) return null;
+  if (addsOf(x.m).some((item) => item.replaces === ing)) {
+    const tweak = x.dd.ingredients.map((_, j) => j === ing ? 1 : tweakOf(x.m, j));
+    return withMeal(week, d, x.i, { ...x.m, tweak, add: addsOf(x.m).filter((item) => item.replaces !== ing), fixed: true });
+  }
   return setAmount(week, d, slot, ing, amountAtOne(x.m, x.dd, ing));
 }
 
@@ -964,6 +968,18 @@ export function tweakIngredient(week, d, slot, ing, dir) {
 // anything else is weighed in grams.
 export const ADD_STEP = { g: 10, st: 1, dl: 0.5, cl: 5 };
 export const ADD_UNITS = ["g", "st", "dl", "cl"];
+export function replaceIngredient(week, d, slot, ing, food, grams) {
+  const x = dishMeal(week, d, slot);
+  if (!x?.dd.lines?.[ing] || !food || !finite(grams) || grams <= 0 || grams > 5000) return null;
+  const add = addsOf(x.m).filter((item) => item.replaces !== ing);
+  if (add.length >= ADD_MAX) return null;
+  const { name, nummer, kcal, protein, fat, carbs } = food;
+  add.push({ name, nummer, kcal, protein, fat, carbs, unit: "g", gpu: 1, amount: grams / (x.m.ate ?? 1), replaces: ing });
+  const tweak = x.dd.ingredients.map((_, j) => j === ing ? 0 : tweakOf(x.m, j));
+  const { fixP: _p, ...rest } = x.m;
+  return withMeal(week, d, x.i, { ...rest, tweak, add, fixed: true });
+}
+
 export function addFood(week, d, slot, food, measure = null) {
   const x = dishMeal(week, d, slot);
   if (!x || !food || addsOf(x.m).length >= ADD_MAX || ![food.kcal, food.protein, food.fat, food.carbs].every(finite)) return null;
@@ -1001,8 +1017,9 @@ export function stepAdd(week, d, slot, j, dir) {
 export function resetMeal(week, d, slot) {
   const i = editable(week, d, slot);
   if (i < 0) return null;
-  const { fixP: _p, tweak: _t, fixed: _f, manual: _m, ...plain } = week.days[d].meals[i];
-  return withMeal(week, d, i, plain);
+  const { fixP: _p, tweak: _t, fixed: _f, manual: _m, add, ...plain } = week.days[d].meals[i];
+  const kept = addsOf({ add }).filter((item) => item.replaces === undefined);
+  return withMeal(week, d, i, kept.length ? { ...plain, add: kept } : plain);
 }
 export const isTouched = (m) => !m.custom && (finite(m.fixP) || m.fixed || m.manual || Array.isArray(m.tweak) || addsOf(m).length > 0);
 
@@ -1018,7 +1035,7 @@ export function changeDish(week, d, slot, dishId) {
   const i = editable(week, d, slot);
   const chosen = dishOf(dishId);
   if (i < 0 || !fits(chosen, slot) || otherMain(week.days[d], slot) === dishId) return null;
-  const kept = addsOf(week.days[d].meals[i]);
+  const kept = addsOf(week.days[d].meals[i]).filter((item) => item.replaces === undefined);
   return withMeal(week, d, i, { slot, dish: dishId, portion: 1, side: 1, chosen: true, ...(kept.length ? { add: kept, fixed: true } : {}) });
 }
 
@@ -1226,6 +1243,7 @@ export function validateCustom(raw) {
 const validShare = (v) => finite(v) && v >= 0 && v <= 2 && Math.abs(v * 4 - Math.round(v * 4)) < 1e-9;
 const validAdd = (a) => isObject(a) && typeof a.name === "string" && a.name !== "" && ADD_UNITS.includes(a.unit)
   && [a.amount, a.gpu, a.kcal, a.protein, a.fat, a.carbs].every(finite) && a.amount > 0 && a.gpu > 0
+  && (a.replaces === undefined || (Number.isInteger(a.replaces) && a.replaces >= 0))
   && (a.step === undefined || (finite(a.step) && a.step > 0));
 const validMeal = (m) => isObject(m) && DISH_SLOTS.includes(m.slot) && typeof m.dish === "string" && finite(m.portion)
   && (m.side === undefined || finite(m.side))
@@ -1258,8 +1276,9 @@ export function refitWeek(week, ids) {
     const cur = next.days[d];
     const meals = cur.meals.map((m, i) => {
       if (!ids.has(m.dish) || !Array.isArray(m.tweak) || isPinned(next, d, i)) return m;
-      const { tweak: _t, fixed: _f, ...rest } = m;
-      return rest;
+      const { tweak: _t, fixed: _f, add, ...rest } = m;
+      const kept = addsOf({ add }).filter((item) => item.replaces === undefined);
+      return kept.length ? { ...rest, add: kept, fixed: true } : rest;
     });
     next = replaceDay(next, d, refit(next, d, { ...cur, meals }));
   });

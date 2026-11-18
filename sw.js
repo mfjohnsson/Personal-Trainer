@@ -1,4 +1,4 @@
-const CACHE = "traningskost-shell-v54";
+const CACHE = "traningskost-shell-v55";
 const SHELL = [
   "./",
   "index.html",
@@ -24,6 +24,7 @@ const SHELL = [
   "js/views/ratter.js",
   "js/views/handla.js",
   "js/views/mealui.js",
+  "js/views/ownfood.js",
   "manifest.webmanifest",
   "icons/icon-192.png",
   "icons/icon-512.png",

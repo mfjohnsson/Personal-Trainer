@@ -335,6 +335,18 @@ details.meal.is-past > summary .meal-name, details.meal.is-past > summary .meal-
 .ing-tweak .ate-val { min-width: 5em; font-weight: 600; }
 /* An ingredient's amount: − / typed number + unit / + (✕ for a food you added). */
 .edit-box .ing-tweak { flex-wrap: nowrap; }
+.food-dialog {
+  width: min(420px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  padding: 18px;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.food-dialog::backdrop { background: rgb(0 0 0 / 55%); }
+.food-dialog h2 { margin-top: 0; }
+.edit-box .ing-tweak .amt-ctl { flex-wrap: wrap; justify-content: flex-end; }
 .ing-off .pick-label s { color: var(--ink-3); }
 .ing-off .note { font-size: 0.8rem; }
 .ing-off .link-btn { min-height: 40px; }

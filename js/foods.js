@@ -1,5 +1,7 @@
 // Food composition lookup. Data: Livsmedelsverket, Livsmedelsdatabasen (CC BY 4.0), values per 100 g,
 // built into data/livsmedel.json by tools/build-foods.mjs. No DOM; the only I/O is load().
+import { get, set } from "./store.js";
+
 let db = null; // { list, byNr }
 let loading = null;
 
@@ -59,7 +61,21 @@ export function load(url = new URL("../data/livsmedel.json", import.meta.url)) {
 }
 
 export const isLoaded = () => !!db;
-export const foodByNumber = (n) => db?.byNr.get(n);
+const ownFoods = () => {
+  const saved = get("ownFoods");
+  return Array.isArray(saved) ? saved : [];
+};
+export const foodByNumber = (n) => db?.byNr.get(n) ?? ownFoods().find((food) => food.nummer === n);
+
+export function saveOwnFood(name, values) {
+  name = name.trim();
+  if (!name || name.length > 100 || ![values.kcal, values.protein, values.fat, values.carbs].every((v) => Number.isFinite(v) && v >= 0)
+    || values.kcal > 900 || [values.protein, values.fat, values.carbs].some((v) => v > 100)) return null;
+  const saved = ownFoods();
+  const nummer = Math.max(10000000, ...saved.map((food) => food.nummer)) + 1;
+  const food = { ...values, name, nummer, key: name.toLowerCase(), own: true };
+  return set("ownFoods", [...saved, food]) ? food : null;
+}
 
 // The food to start from for the ingredient names the built-in dishes use (written as `norm` gives them).
 // Raw weights for meat, fish and dry goods; cooked weights where the name says "tillagad".
@@ -101,6 +117,43 @@ export function search(query, limit = 6) {
   // A name the built-in dishes use ("kycklingfilé") goes first with the food chosen for it.
   const preferred = foodByNumber(PREFERRED[norm(query)]);
   return preferred ? [preferred, ...hits.filter((f) => f !== preferred)].slice(0, limit) : hits;
+}
+
+// Interactive suggestions are kept separate from automatic ingredient matching.
+const compact = (s) => s.toLowerCase().normalize("NFD").replace(/\p{M}|[^\p{L}\p{N}]/gu, "");
+function oneEdit(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  if (a.length > b.length) return oneEdit(b, a);
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i++;
+  if (a.length < b.length) return a.slice(i) === b.slice(i + 1);
+  return a.slice(i + 1) === b.slice(i + 1)
+    || (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2));
+}
+
+export function lookup(query, limit = 8) {
+  const key = norm(query);
+  if (key.length < 2) return [];
+  const typed = compact(key);
+  if (!typed) return [];
+  const saved = ownFoods();
+  const list = [...saved, ...(db?.list ?? [])];
+  const words = tokens(query).map((word) => compact(SYNONYMS[word] ?? word));
+  const aliases = Object.entries(PREFERRED);
+  const preferred = foodByNumber(PREFERRED[key] ?? aliases.find(([name]) => compact(name) === typed)?.[1]);
+  const joined = list.filter((f) => compact(f.name).startsWith(typed));
+  const direct = list.filter((f) => words.every((word) => compact(f.name).includes(word)));
+  const matches = [...new Set([preferred, ...joined, ...direct].filter(Boolean))];
+  if (matches.length) return matches.slice(0, limit);
+  const likely = typed.length >= 4 ? aliases.filter(([name]) => oneEdit(typed, compact(name)))
+    .map(([, nr]) => foodByNumber(nr)).filter(Boolean) : [];
+  const typo = typed.length >= 4 ? list.filter((f) => {
+    const parts = tokens(f.name).map(compact);
+    return parts.some((part, i) => oneEdit(typed, part) || oneEdit(typed, part + (parts[i + 1] ?? "")));
+  }) : [];
+  const ending = key.match(/(gryn|flingor|mjöl|bröd|färs|ost|yoghurt|pasta)(?:\s|$)/)?.[1];
+  const related = ending ? search(ending === "gryn" ? "havregryn" : ending, 4) : search(query, limit);
+  return [...new Set([...likely, ...typo, ...related])].slice(0, limit).map((food) => ({ ...food, suggested: true }));
 }
 
 function searchText(query, limit) {

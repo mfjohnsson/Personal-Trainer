@@ -6,6 +6,7 @@ import * as foods from "../foods.js";
 import * as mealplan from "../mealplan.js";
 import { todayIso } from "./training.js";
 import { esc } from "../html.js";
+import { createOwnFood, foodHint } from "./ownfood.js";
 
 export const title = "Rätter";
 
@@ -130,7 +131,7 @@ export function mount(el) {
 
   function resultsHtml() {
     return results.map((f) => `<button type="button" class="result" data-act="add-food" data-nr="${f.nummer}">
-      <span>${esc(f.name)}</span><span class="note">${Math.round(f.kcal)} kcal · ${nf.format(f.protein)} g protein /100 g</span></button>`).join("");
+      <span>${esc(f.name)}</span><span class="note">${foodHint(f)}${Math.round(f.kcal)} kcal · ${nf.format(f.protein)} g protein /100 g</span></button>`).join("");
   }
 
   function formHtml() {
@@ -144,6 +145,7 @@ export function mount(el) {
         <label for="food-search">Lägg till ingrediens</label>
         <input id="food-search" type="search" autocomplete="off" placeholder="Sök, t.ex. kyckling" aria-describedby="err-ingredients">
         <div class="results" id="results">${resultsHtml()}</div>
+        <button class="link-btn" type="button" data-act="own-food">Skapa eget livsmedel</button>
         <p class="field-error" id="err-ingredients" hidden></p>
       </div>
       <p class="calc-total" id="totals" aria-live="polite">${totalsText()}</p>
@@ -262,7 +264,7 @@ export function mount(el) {
     if (!editing) return;
     if (t.id === "d-name") { editing.name = t.value; return; }
     if (t.id === "food-search") {
-      results = t.value.trim().length >= 2 ? foods.search(t.value, 6) : [];
+      results = foods.lookup(t.value, 6);
       el.querySelector("#results").innerHTML = resultsHtml();
       return;
     }
@@ -286,11 +288,10 @@ export function mount(el) {
     else if (t.name === "meals") editing.meals = t.value === "both" ? meals.MAIN : [t.value];
     else if (t.name === "kind") editing.kind = t.value;
   };
-  // Enter in the search box adds the first hit instead of submitting the form.
+  // Enter in the search box must not submit the recipe form.
   el.onkeydown = (e) => {
     if (e.key !== "Enter" || e.target.id !== "food-search") return;
     e.preventDefault();
-    el.querySelector('[data-act="add-food"]')?.click();
   };
 
   // Assigned, not added: `el` is the same element for every view (app.js clears it between views).
@@ -300,6 +301,13 @@ export function mount(el) {
     const { act, id } = btn.dataset;
     if (act === "add") open(null, meals.GROUPS.find((g) => g.id === btn.dataset.group).slots[0]);
     else if (act === "edit") open(id, meals.dishOf(id).slot);
+    else if (act === "own-food") createOwnFood(el.querySelector("#food-search").value, (food) => {
+      syncName();
+      editing.rows.push({ name: food.name, amount: meals.defaultGrams(food), unit: "g", nummer: food.nummer });
+      refit();
+      results = [];
+      render("#food-search");
+    });
     else if (act === "add-food") {
       syncName();
       const food = foods.foodByNumber(Number(btn.dataset.nr));
