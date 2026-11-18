@@ -84,6 +84,7 @@ function listHtml(msg, undo) {
       ${isMain ? `<div class="dish-filters" role="group" aria-label="Filtrera huvudrätter">${filters.map((item) =>
         `<button type="button" data-act="category" data-category="${esc(item.id)}" aria-pressed="${category === item.id}">${esc(item.label)}</button>`).join("")}</div>
         <button type="button" class="link-btn" data-act="manage-categories" aria-expanded="${manageCategories}"${manageCategories ? ' aria-controls="category-manager"' : ""}>${manageCategories ? "Stäng kategorihantering" : "Hantera kategorier"}</button>` : ""}
+      ${foods.activeOwnFoods().length ? '<button type="button" class="link-btn" data-act="manage-foods">Egna ingredienser</button>' : ""}
       <p class="note" id="list-note" role="status" aria-live="polite">${msg ?? ""}${undo ? ` <button class="link-btn" type="button" data-act="undo-delete" data-id="${esc(undo)}">Ångra</button>` : ""}</p>
     </section>
     ${isMain && manageCategories ? categoryManager() : ""}
@@ -343,6 +344,21 @@ export function mount(el) {
     if (act === "add") open(null, meals.GROUPS.find((g) => g.id === btn.dataset.group).slots[0]);
     else if (act === "edit") open(id, meals.dishOf(id).slot);
     else if (act === "own-food") createOwnFood(el.querySelector("#food-search").value, addIngredient);
+    else if (act === "manage-foods") {
+      const options = foods.activeOwnFoods().sort((a, b) => a.name.localeCompare(b.name, "sv"));
+      editDialog("Egna ingredienser", `
+        <label class="field">Välj ingrediens att ta bort
+          <select class="pick" name="food" required><option value="">Välj ingrediens</option>
+            ${options.map((f) => `<option value="${f.nummer}">${esc(f.name)} · ${nf.format(f.kcal)} kcal/100 g</option>`).join("")}
+          </select>
+        </label>
+        <p class="note">Ingrediensen tas bort från sökningen. Sparade rätter och måltider behåller sina näringsvärden.</p>`, "Ta bort", (data) => {
+        if (!foods.removeOwnFood(Number(data.get("food")))) return SAVE_ERROR;
+        msg = "Ingrediensen har tagits bort.";
+        undo = null;
+        return () => render(foods.activeOwnFoods().length ? '[data-act="manage-foods"]' : '[data-act="tab"][aria-pressed="true"]');
+      });
+    }
     else if (act === "add-food") {
       addIngredient(foods.foodByNumber(Number(btn.dataset.nr)));
     } else if (act === "remove") {

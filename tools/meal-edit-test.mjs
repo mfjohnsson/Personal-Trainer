@@ -23,6 +23,17 @@ const own = foods.saveOwnFood("Kvarngryn", { kcal: 340, protein: 12, fat: 3, car
 assert.ok(own);
 foods.setData(db);
 assert.equal(foods.lookup("kvarngryn")[0].nummer, own.nummer);
+const typo = foods.saveOwnFood("Kvangryn", own);
+assert.equal(foods.removeOwnFood(1173), false);
+refuseWrites = true;
+assert.equal(foods.removeOwnFood(typo.nummer), false);
+assert.ok(foods.activeOwnFoods().some((food) => food.nummer === typo.nummer));
+refuseWrites = false;
+assert.equal(foods.removeOwnFood(typo.nummer), true);
+assert.deepEqual(foods.activeOwnFoods().map((food) => food.nummer), [own.nummer]);
+assert.ok(foods.lookup("Kvangryn").every((food) => food.nummer !== typo.nummer));
+assert.equal(foods.macrosOf([["Kvangryn", 100, "g", "", typo.nummer]]).kcal, typo.kcal);
+assert.ok(foods.saveOwnFood("Nytt gryn", own).nummer > typo.nummer);
 
 dishes.init();
 assert.deepEqual(meals.dishCategories(meals.dishOf("lunch-notfars")), ["kott"]);

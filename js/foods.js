@@ -63,9 +63,18 @@ export function load(url = new URL("../data/livsmedel.json", import.meta.url)) {
 export const isLoaded = () => !!db;
 const ownFoods = () => {
   const saved = get("ownFoods");
-  return Array.isArray(saved) ? saved : [];
+  return Array.isArray(saved) ? saved.filter((food) => Number.isSafeInteger(food?.nummer) && typeof food.name === "string") : [];
 };
 export const foodByNumber = (n) => db?.byNr.get(n) ?? ownFoods().find((food) => food.nummer === n);
+
+// Saved recipes reference food numbers, so keep their nutritional values available after removal.
+export const activeOwnFoods = () => ownFoods().filter((food) => !food.removed);
+
+export function removeOwnFood(nummer) {
+  const saved = ownFoods();
+  const food = saved.find((item) => item.nummer === nummer && !item.removed);
+  return !!food && set("ownFoods", saved.map((item) => item === food ? { ...item, removed: true } : item));
+}
 
 export function saveOwnFood(name, values) {
   name = name.trim();
@@ -136,8 +145,7 @@ export function lookup(query, limit = 8) {
   if (key.length < 2) return [];
   const typed = compact(key);
   if (!typed) return [];
-  const saved = ownFoods();
-  const list = [...saved, ...(db?.list ?? [])];
+  const list = [...activeOwnFoods(), ...(db?.list ?? [])];
   const words = tokens(query).map((word) => compact(SYNONYMS[word] ?? word));
   const aliases = Object.entries(PREFERRED);
   const preferred = foodByNumber(PREFERRED[key] ?? aliases.find(([name]) => compact(name) === typed)?.[1]);
