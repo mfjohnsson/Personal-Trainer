@@ -2,6 +2,7 @@
 // what to cook.
 import * as plan from "../plan.js";
 import * as meals from "../meals.js";
+import * as dishes from "../dishes.js";
 import * as mealplan from "../mealplan.js";
 import { todayIso, storageErrorHtml } from "./training.js";
 import * as mealui from "./mealui.js";
@@ -77,6 +78,29 @@ function prepHtml(week, from) {
   </section>`;
 }
 
+const dishNameOrder = new Intl.Collator("sv");
+
+function planOptionsHtml(options, meal) {
+  const optionHtml = (dish) => `<option value="${esc(dish.id)}"${dish.id === meal.dish ? " selected" : ""}>${esc(dish.name)}</option>`;
+  if (meal.slot !== "lunch" && meal.slot !== "middag") return options.map(optionHtml).join("");
+
+  const groups = new Map();
+  for (const dish of options) {
+    const [category] = dishes.categoriesOf(dish);
+    const subtype = category.id === "kott" && !dishes.categoryChoice(dish.id)
+      ? meals.meatSubtype(dish.name) ?? dish.ingredients.map(([name]) => meals.meatSubtype(name)).find(Boolean)
+      : null;
+    const label = subtype ?? category.label;
+    const group = groups.get(label) ?? [];
+    group.push(dish);
+    groups.set(label, group);
+  }
+
+  return [...groups].sort(([a], [b]) => dishNameOrder.compare(a, b)).map(([label, group]) =>
+    `<optgroup label="${esc(label)}">${group.sort((a, b) => dishNameOrder.compare(a.name, b.name)).map(optionHtml).join("")}</optgroup>`
+  ).join("");
+}
+
 // "Planera veckan": every day of the week with its meals and its top-up as pickers. Meals you skipped or
 // ate otherwise, and days that are over, as text.
 function planWeekHtml(week, from) {
@@ -94,7 +118,7 @@ function planWeekHtml(week, from) {
       const options = offered.some((o) => o.id === m.dish) ? offered : [...offered, meals.dishOf(m.dish)];
       return `<div class="plan-row"><label class="pick-label" for="pick-${d}-${m.slot}">${meals.slotLabel(m.slot)}</label>
         <select class="pick" id="pick-${d}-${m.slot}" data-day="${d}" data-slot="${m.slot}">
-          ${options.map((o) => `<option value="${esc(o.id)}"${o.id === m.dish ? " selected" : ""}>${esc(o.name)}</option>`).join("")}
+          ${planOptionsHtml(options, m)}
         </select></div>`;
     }).join("");
     const info = meals.extrasInfo(day);

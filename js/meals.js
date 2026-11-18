@@ -175,16 +175,25 @@ const POULTRY = /kyckling|kalkon|anka|andbröst|gås|höna|höns/i;
 const MEAT = /kött|nötfärs|nötkött|fläsk|biff|entrecôte|ryggbiff|oxfilé|lamm|vilt|älg|renkött|korv|skinka|bacon|hamburgare/i;
 const MEATLESS = /\b(?:vego|vegetarisk|vegansk|soja|tofu|kikärts|bön|lins|svamp)(?:[\p{L}-]*)(?:färs|biff|korv|burgare)|köttfri|fiskfri|växtbaserad/iu;
 
+export function meatSubtype(name) {
+  if (MEATLESS.test(name)) return null;
+  if (/nöt(?:färs|kött|fil[ée]|stek|bringa)|ox(?:fil[ée]|kind|svans|bringa)|entrec[oô]te|ryggbiff|högrev/i.test(name)) return "Nöt";
+  if (/fläsk|bacon|kotlett|kassler|skinka/i.test(name)) return "Fläsk";
+  return null;
+}
+
 export function dishCategories(dish) {
   const categoryOfText = (text) => {
     if (MEATLESS.test(text)) return null;
     if (POULTRY.test(text)) return "kyckling";
     if (FISH.test(text) || /makrill|kräft|sill|gädda|hummer|mussl|ansjovis|strömming/i.test(text)) return "fisk";
-    if (MEAT.test(text)) return "kott";
+    if (MEAT.test(text) || meatSubtype(text)) return "kott";
     return null;
   };
   const ingredientCategory = dish.ingredients.map(([name]) => categoryOfText(name)).find(Boolean);
-  const main = ingredientCategory ?? categoryOfText(dish.name) ?? (dish.kind === "fisk" && !MEATLESS.test(dish.name) ? "fisk" : "ovrigt");
+  const titleCategory = categoryOfText(dish.name);
+  const main = titleCategory === "kott" && meatSubtype(dish.name) ? titleCategory : ingredientCategory ?? titleCategory
+    ?? (dish.kind === "fisk" && !MEATLESS.test(dish.name) ? "fisk" : "ovrigt");
   return dish.kind === "snabb" ? [main, "snabb"] : [main];
 }
 

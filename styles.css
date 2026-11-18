@@ -367,14 +367,30 @@ details.meal.is-past > summary .meal-name, details.meal.is-past > summary .meal-
 .food-dialog {
   width: min(420px, calc(100% - 32px));
   max-height: calc(100% - 32px);
-  padding: 18px;
+  padding: 20px;
   color: inherit;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
 }
 .food-dialog::backdrop { background: rgb(0 0 0 / 55%); }
-.food-dialog h2 { margin-top: 0; }
+.food-dialog form { display: grid; gap: 12px; }
+.food-dialog h2, .food-dialog p { margin: 0; }
+.food-dialog .field { display: grid; gap: 6px; }
+.food-dialog .meal-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.food-dialog .meal-actions > button {
+  margin: 0;
+  min-height: 48px;
+  padding: 8px 12px;
+  overflow-wrap: anywhere;
+}
+.food-dialog .pick { width: 100%; }
 .ingredient-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
