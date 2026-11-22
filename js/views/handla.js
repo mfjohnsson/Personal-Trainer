@@ -3,6 +3,7 @@
 import { get, set } from "../store.js";
 import * as plan from "../plan.js";
 import * as meals from "../meals.js";
+import { gramsOf } from "../foods.js";
 import * as mealplan from "../mealplan.js";
 import { todayIso, storageErrorHtml } from "./training.js";
 import { esc } from "../html.js";
@@ -14,23 +15,53 @@ const CATEGORY_ORDER = ["Kött och fisk", "Mejeri och ägg", "Frukt och grönt",
 const KEEP_WEEKS = 8;
 const nf = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 1 });
 
+// What you buy, not how it is eaten: "Ägg kokt" and "Ägg rått" are both eggs, "Lax stekt m. salt" is salmon.
+const PREP = /,?\s*(?<!\p{L})(?:kokt|kokta|stekt|tillagad|tillagat|rått|rå|färsk|torr|torrt|avrunnen|konserv\.?|hemlagad|vassle|naturell)(?!\p{L})|\s+[mu]\.\s*\p{L}+|\s+fett\s+[\d,]+\s*%|\s*\([^)]*\)/giu;
+const COOKED = /(?<!\p{L})(?:kokt|kokta|stekt|tillagad|tillagat)(?!\p{L})/iu;
+export const baseName = (name) => name.replace(PREP, "").replace(/\s{2,}/g, " ").replace(/[\s,]+$/, "").trim() || name;
+
+// Cooked weight / raw weight, to turn a cooked amount back into what goes in the basket. Estimates.
+const YIELD = [[/pasta|spaghetti|makaroner/i, 2.3], [/ris$/i, 2.6], [/quinoa/i, 3], [/matvete/i, 2.4],
+  [/nöt|hamburgare|färs|biff|entrecôte|kyckling|kalkon|fläsk/i, 0.75], [/lax|torsk|fisk|makrill/i, 0.8]];
+const yieldOf = (name) => YIELD.find(([re]) => re.test(name))?.[1] ?? 1;
+
+// Rows { name, unit, amount, category } -> one item per thing to buy. Same unit: summed as is; mixed units
+// (e.g. tomatoes in pieces, grams and slices): everything in grams. Cooked grams are converted to raw.
+export function merge(rows) {
+  const by = new Map();
+  for (const r of rows) {
+    const name = baseName(r.name);
+    const cur = by.get(name.toLowerCase()) ?? { name, rows: [] };
+    cur.rows.push(r);
+    by.set(name.toLowerCase(), cur);
+  }
+  return [...by].map(([lower, { name, rows: rs }]) => {
+    const unit = rs.every((r) => r.unit === rs[0].unit) ? rs[0].unit : "g";
+    let amount = 0;
+    for (const r of rs) {
+      let a = r.unit === unit ? r.amount : gramsOf(r.amount, r.unit, r.name).grams;
+      if (unit === "g" && COOKED.test(r.name)) a /= yieldOf(name);
+      amount += a;
+    }
+    amount = unit === "g" ? Math.max(5, Math.round(amount / 5) * 5) : unit === "dl" ? Math.round(amount * 10) / 10 : Math.ceil(amount - 1e-9);
+    return { key: `${lower}|${unit}`, name, unit, amount, category: meals.categoryOf(name) };
+  });
+}
+
 // Sums the ingredients of days `from`..6. Grams over a kilo are shown in kg.
 export function listOf(week, from) {
-  const items = new Map();
+  const rows = [];
   for (const day of week.days.slice(from)) {
     for (const m of meals.dayItems(day)) {
       if (m.custom || m.ate === 0) continue; // eaten otherwise or skipped
       for (const i of meals.mealInfo(m).ingredients) {
         if (/^vatten( kranvatten)?$/i.test(i.name) || !i.amount) continue; // nothing to buy
-        const key = `${i.name.toLowerCase()}|${i.unit}`;
-        const cur = items.get(key) ?? { key, name: i.name, unit: i.unit, category: i.category, amount: 0 };
-        cur.amount += i.amount;
-        items.set(key, cur);
+        rows.push(i);
       }
     }
   }
   const groups = new Map(CATEGORY_ORDER.map((c) => [c, []]));
-  for (const it of items.values()) (groups.get(it.category) ?? groups.get("Skafferi")).push(it);
+  for (const it of merge(rows)) (groups.get(it.category) ?? groups.get("Skafferi")).push(it);
   for (const list of groups.values()) list.sort((a, b) => a.name.localeCompare(b.name, "sv"));
   return [...groups].filter(([, list]) => list.length);
 }
